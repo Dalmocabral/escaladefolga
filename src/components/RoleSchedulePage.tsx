@@ -1,0 +1,1692 @@
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import type {
+  ShiftConfig,
+  Employee,
+  CategoryScheduleSettings,
+  GenerateFolgaOptions,
+  EmployeeLeave,
+  LeaveType,
+  ScaleType,
+  GenerationMode,
+  CompensatorySundayMode,
+} from '../types';
+import { distributeEmployeesToTeams, TEAMS, type TeamConfig } from '../utils/teams';
+import { exportScheduleToExcel } from '../utils/exportToExcel';
+import { RoleScheduleConfigModal } from './RoleScheduleConfigModal';
+import { GenerateFolgaModal } from './GenerateFolgaModal';
+import { LeaveModal } from './LeaveModal';
+import {
+  ArrowLeft,
+  Wand2,
+  Settings,
+  UserPlus,
+  RotateCcw,
+  CheckCircle2,
+  Users,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  MoreVertical,
+  Trash2,
+  FileSpreadsheet,
+  GripVertical,
+  ArrowUpDown,
+} from 'lucide-react';
+
+interface RoleSchedulePageProps {
+  shift: ShiftConfig;
+  roleName: string;
+  roleEmoji: string;
+  onBack: () => void;
+  onGoToRegistration: () => void;
+  employees: Employee[];
+  onReorderEmployees?: (newEmployees: Employee[]) => void;
+}
+
+interface DayColumn {
+  dayNumber: number;
+  dateKey: string;
+  fullDate: string; // YYYY-MM-DD
+  dayShort: string;
+  dd: string;
+  isSunday: boolean;
+  isSaturday: boolean;
+}
+
+const MONTH_NAMES = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
+
+const generateMonthDays = (year: number, month: number): DayColumn[] => {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const dayNames = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+  const columns: DayColumn[] = [];
+
+  const mm = String(month + 1).padStart(2, '0');
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const dayOfWeekIdx = date.getDay();
+    const dayShort = dayNames[dayOfWeekIdx];
+    const dd = String(d).padStart(2, '0');
+
+    columns.push({
+      dayNumber: d,
+      dateKey: `${dd}/${mm}`,
+      fullDate: `${year}-${mm}-${dd}`,
+      dayShort,
+      dd,
+      isSunday: dayOfWeekIdx === 0,
+      isSaturday: dayOfWeekIdx === 6,
+    });
+  }
+
+  return columns;
+};
+
+// Regra que define o primeiro dia de folga para cada equipe (evitando colisões)
+export const getInitialTeamOffDay = (
+  teamIdx: number,
+  numTeams: number,
+  scaleType: ScaleType
+): number => {
+  if (scaleType === '5x1') {
+    if (numTeams === 5) {
+      // 5 Equipes em 5x1: cada equipe folga em um dia separado (idêntico à imagem 2 manual do usuário)
+      // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25, 31)
+      // Equipe 1 (Azul) -> Dia 3 (03, 09, 15, 21, 27)
+      // Equipe 2 (Amarela) -> Dia 4 (04, 10, 16, 22, 28)
+      // Equipe 3 (Vermelha) -> Dia 5 (05, 11, 17, 23, 29)
+      // Equipe 4 (Cinza) -> Dia 6 (06, 12, 18, 24, 30)
+      const offsets5 = [1, 3, 4, 5, 6];
+      return offsets5[teamIdx] ?? ((teamIdx % 6) + 1);
+    }
+    if (numTeams === 4) {
+      // 4 Equipes em 5x1: cada equipe folga em um dia diferente garantindo domingos distribuídos
+      const offsets4 = [1, 2, 4, 5];
+      return offsets4[teamIdx] ?? 1;
+    }
+    if (numTeams === 3) {
+      // 3 Equipes em 5x1: alternância perfeita a cada 2 dias (1, 3, 5)
+      // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25) -> Domingo 01
+      // Equipe 1 (Azul) -> Dia 3 (03, 09, 15, 21, 27) -> Domingo 15
+      // Equipe 2 (Amarela) -> Dia 5 (05, 11, 17, 23, 29) -> Domingo 29
+      // Todas as 3 equipes mantêm a rotação 5x1 pura e ganham 1 domingo naturalmente!
+      const offsets3 = [1, 3, 5];
+      return offsets3[teamIdx] ?? 1;
+    }
+    if (numTeams === 2) {
+      const offsets2 = [1, 4];
+      return offsets2[teamIdx] ?? 1;
+    }
+    return (teamIdx % 6) + 1;
+  }
+
+  if (scaleType === '6x1') {
+    return (teamIdx % 7) + 1;
+  }
+
+  // 12x36
+  return teamIdx % 2 === 0 ? 1 : 2;
+};
+
+// Gera folgas iniciais para Novembro/2026 para a categoria atual
+const buildInitialNovemberSchedule = (
+  employees: Employee[],
+  shiftId: string,
+  roleName: string,
+  numTeams: number,
+  scaleType: ScaleType
+): Record<string, Record<number, boolean>> => {
+  const schedule: Record<string, Record<number, boolean>> = {};
+  const catEmployees = employees.filter(
+    (e) => e.shiftId === shiftId && e.role.toLowerCase() === roleName.toLowerCase()
+  );
+  const teams = distributeEmployeesToTeams(catEmployees, numTeams);
+  const cycleLen = scaleType === '5x1' ? 6 : scaleType === '6x1' ? 7 : 2;
+
+  // Domingos em Novembro de 2026: 01, 08, 15, 22, 29 (5 domingos)
+  const novSundays = [1, 8, 15, 22, 29];
+  const numNovSundays = novSundays.length;
+
+  teams.forEach(({ members }, teamIdx) => {
+    const firstOffDay = getInitialTeamOffDay(teamIdx, numTeams, scaleType);
+
+    members.forEach((emp) => {
+      const daysOff: Record<number, boolean> = {};
+      for (let d = 1; d <= 30; d++) {
+        daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+      }
+      schedule[emp.id] = daysOff;
+    });
+
+    // Distribuição de folga compensatória para quem ficou com 0 domingos
+    const zeroSundayMembers = members.filter((emp) => {
+      const offs = schedule[emp.id] || {};
+      return novSundays.filter((s) => offs[s] === true).length === 0;
+    });
+
+    if (zeroSundayMembers.length > 0) {
+      // Concede a folga dominical como folga compensatória adicional sem remover a folga regular da equipe
+      // (evitando criar períodos abusivos de mais de 5 ou 6 dias consecutivos trabalhados)
+      zeroSundayMembers.forEach((emp, idx) => {
+        const targetSunday = novSundays[idx % numNovSundays];
+        schedule[emp.id][targetSunday] = true;
+      });
+    }
+  });
+
+  return schedule;
+};
+
+export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
+  shift,
+  roleName,
+  roleEmoji,
+  onBack,
+  onGoToRegistration,
+  employees,
+  onReorderEmployees,
+}) => {
+  // Chaves do banco de dados local (localStorage) por turno e setor
+  const storageKeySchedules = `escala_db_schedules_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeySettings = `escala_db_settings_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyLeaves = `escala_db_leaves_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyTeamAssignments = `escala_db_team_assignments_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // Colaboradores desta categoria/função no turno atual
+  const categoryEmployees = useMemo(() => {
+    return employees.filter(
+      (emp) => emp.shiftId === shift.id && emp.role.toLowerCase() === roleName.toLowerCase()
+    );
+  }, [employees, shift.id, roleName]);
+
+  // 1. Settings state (carrega do banco local ou inicia padrão)
+  const [settings, setSettings] = useState<CategoryScheduleSettings>(() => {
+    try {
+      const saved = localStorage.getItem(storageKeySettings);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.scaleType && parsed.numTeams) {
+          // Se houver 20+ colaboradores e as equipes salvas forem menos de 5 por padrão anterior, atualiza para 5
+          if (categoryEmployees.length >= 20 && parsed.numTeams < 5) {
+            return {
+              ...parsed,
+              numTeams: 5,
+            };
+          }
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao ler configurações do banco local:', e);
+    }
+    return {
+      scaleType: '5x1',
+      numTeams: categoryEmployees.length >= 20 ? 5 : 3,
+    };
+  });
+
+  // Salva configurações no banco local
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeySettings, JSON.stringify(settings));
+    } catch (e) {
+      console.error('Erro ao salvar configurações no banco local:', e);
+    }
+  }, [settings, storageKeySettings]);
+
+  // 2. Divisão e Alocação Flexível de Equipes (Permite qualquer tamanho por equipe, ex: 4 e 2)
+  const [teamAssignments, setTeamAssignments] = useState<Record<number, string[]>>(() => {
+    try {
+      const saved = localStorage.getItem(storageKeyTeamAssignments);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          const keys = Object.keys(parsed).map(Number);
+          const expectedTeams = categoryEmployees.length >= 20 ? 5 : 3;
+          if (keys.length === expectedTeams) {
+            return parsed;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao ler divisões de equipe do banco local:', e);
+    }
+    // Distribuição inicial padrão
+    const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+    const initialDist = distributeEmployeesToTeams(categoryEmployees, initialNumTeams);
+    const initialMap: Record<number, string[]> = {};
+    for (let i = 0; i < initialNumTeams; i++) {
+      initialMap[i] = [];
+    }
+    initialDist.forEach(({ team, members }) => {
+      initialMap[team.id] = members.map((m) => m.id);
+    });
+    return initialMap;
+  });
+
+  // Salva divisões de equipes no banco local sempre que mudar
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeyTeamAssignments, JSON.stringify(teamAssignments));
+    } catch (e) {
+      console.error('Erro ao salvar divisões de equipe no banco local:', e);
+    }
+  }, [teamAssignments, storageKeyTeamAssignments]);
+
+  // Garante que qualquer colaborador novo cadastrado no setor apareça automaticamente na escala
+  // e limpa rigorosamente quaisquer duplicidades em teamAssignments (seja mesma equipe ou equipes diferentes)
+  // Além disso, se o número de equipes configuradas aumentou e há equipes vazias, redistribui proporcionalmente.
+  useEffect(() => {
+    const safeNum = Math.max(1, Math.min(settings.numTeams, TEAMS.length));
+    const allAssigned = new Set<string>();
+    let needsUpdate = false;
+
+    const sanitized: Record<number, string[]> = {};
+    for (let i = 0; i < safeNum; i++) {
+      sanitized[i] = [];
+      const list = teamAssignments[i] || [];
+      list.forEach((id) => {
+        const empExists = categoryEmployees.some((e) => e.id === id);
+        if (empExists && !allAssigned.has(id)) {
+          allAssigned.add(id);
+          sanitized[i].push(id);
+        } else {
+          // ID duplicado ou colaborador removido do setor
+          needsUpdate = true;
+        }
+      });
+    }
+
+    // Se houver equipes vazias quando temos colaboradores suficientes para preencher todas as equipes
+    const emptyActiveTeamsCount = Array.from({ length: safeNum }, (_, i) => sanitized[i].length).filter(
+      (c) => c === 0
+    ).length;
+
+    if (emptyActiveTeamsCount > 0 && categoryEmployees.length >= safeNum) {
+      // Redistribuição limpa e proporcional para preencher todas as equipes ativas
+      const freshDist = distributeEmployeesToTeams(categoryEmployees, safeNum);
+      const rebalanced: Record<number, string[]> = {};
+      for (let i = 0; i < safeNum; i++) rebalanced[i] = [];
+      freshDist.forEach(({ team, members }) => {
+        rebalanced[team.id] = members.map((m) => m.id);
+      });
+      setTeamAssignments(rebalanced);
+      return;
+    }
+
+    // Identifica colaboradores da categoria que ainda não foram alocados
+    const unassigned = categoryEmployees.filter((e) => !allAssigned.has(e.id));
+    if (unassigned.length > 0) {
+      needsUpdate = true;
+      unassigned.forEach((emp) => {
+        if (!allAssigned.has(emp.id)) {
+          allAssigned.add(emp.id);
+          let smallestTeamId = 0;
+          let smallestCount = Infinity;
+          for (let i = 0; i < safeNum; i++) {
+            const count = sanitized[i].length;
+            if (count < smallestCount) {
+              smallestCount = count;
+              smallestTeamId = i;
+            }
+          }
+          sanitized[smallestTeamId].push(emp.id);
+        }
+      });
+    }
+
+    if (needsUpdate) {
+      setTeamAssignments(sanitized);
+    }
+  }, [categoryEmployees, settings.numTeams, teamAssignments]);
+
+  // Divisão de equipes respeitando a personalização flexível do usuário
+  // e garantindo com 100% de segurança que NENHUM colaborador apareça duplicado na tabela
+  const distributedTeams: { team: TeamConfig; members: Employee[] }[] = useMemo(() => {
+    const safeNumTeams = Math.max(1, Math.min(settings.numTeams, TEAMS.length));
+    const activeTeams = TEAMS.slice(0, safeNumTeams);
+
+    // Mapeia colaboradores únicos por ID e também previne colaboradores duplicados (mesmo nome ou matrícula)
+    const empById = new Map<string, Employee>();
+    const seenRegistrations = new Set<string>();
+    const seenNames = new Set<string>();
+    const uniqueCategoryEmployees: Employee[] = [];
+
+    categoryEmployees.forEach((emp) => {
+      const regKey = emp.registration?.trim().toUpperCase();
+      const nameKey = emp.name?.trim().toLowerCase();
+      if (regKey && seenRegistrations.has(regKey)) {
+        return;
+      }
+      if (nameKey && seenNames.has(nameKey)) {
+        return;
+      }
+      if (regKey) seenRegistrations.add(regKey);
+      if (nameKey) seenNames.add(nameKey);
+      empById.set(emp.id, emp);
+      uniqueCategoryEmployees.push(emp);
+    });
+
+    const globallyAssignedEmpIds = new Set<string>();
+
+    const result: { team: TeamConfig; members: Employee[] }[] = activeTeams.map((team) => {
+      const memberIds = teamAssignments[team.id] || [];
+      const members: Employee[] = [];
+      memberIds.forEach((id: string) => {
+        // Bloqueia se já tiver sido adicionado a qualquer equipe
+        if (!globallyAssignedEmpIds.has(id)) {
+          const emp = empById.get(id);
+          if (emp) {
+            globallyAssignedEmpIds.add(id);
+            members.push(emp);
+          }
+        }
+      });
+      return { team, members };
+    });
+
+    // Se houver algum colaborador recém-cadastrado ainda não alocado no state, distribui sem duplicar
+    const unassigned = uniqueCategoryEmployees.filter((emp) => !globallyAssignedEmpIds.has(emp.id));
+    if (unassigned.length > 0) {
+      unassigned.forEach((emp) => {
+        if (!globallyAssignedEmpIds.has(emp.id)) {
+          globallyAssignedEmpIds.add(emp.id);
+          let smallestTeamIdx = 0;
+          let smallestCount = Infinity;
+          result.forEach((t, idx) => {
+            if (t.members.length < smallestCount) {
+              smallestCount = t.members.length;
+              smallestTeamIdx = idx;
+            }
+          });
+          result[smallestTeamIdx].members.push(emp);
+        }
+      });
+    }
+
+    return result;
+  }, [categoryEmployees, settings.numTeams, teamAssignments]);
+
+  // Mapeamento rápido de colaborador -> equipe
+  const employeeTeamMap = useMemo(() => {
+    const map = new Map<string, TeamConfig>();
+    distributedTeams.forEach(({ team, members }) => {
+      members.forEach((emp) => map.set(emp.id, team));
+    });
+    return map;
+  }, [distributedTeams]);
+
+  // 3. Currently viewed month and year (Padrão: Novembro de 2026)
+  const [viewMonth, setViewMonth] = useState<number>(10); // 10 = Novembro
+  const [viewYear, setViewYear] = useState<number>(2026);
+
+  // 4. Modals state
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // 5. Stored schedules by month: key "YYYY-M" -> empId -> dayNumber -> boolean (true = Folga)
+  // Carrega todas as escalas gravadas no banco de dados local
+  const [monthlySchedules, setMonthlySchedules] = useState<
+    Record<string, Record<string, Record<number, boolean>>>
+  >(() => {
+    try {
+      const saved = localStorage.getItem(storageKeySchedules);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          // Detecta se a escala salva anteriormente continha distorção abusiva (> 6 dias trabalhados seguidos)
+          let hasAnomaly = false;
+          for (const mKey of Object.keys(parsed)) {
+            const mData = parsed[mKey] || {};
+            for (const empId of Object.keys(mData)) {
+              const offs = mData[empId] || {};
+              let consecutiveWork = 0;
+              for (let d = 1; d <= 31; d++) {
+                if (offs[d] === true) {
+                  consecutiveWork = 0;
+                } else if (offs[d] === false) {
+                  consecutiveWork++;
+                  if (consecutiveWork > 6) {
+                    hasAnomaly = true;
+                    break;
+                  }
+                }
+              }
+              if (hasAnomaly) break;
+            }
+            if (hasAnomaly) break;
+          }
+
+          // Detecta se há membros da mesma equipe com rotações diferentes/dessincronizadas no mês inicial
+          if (!hasAnomaly && parsed['2026-10']) {
+            const novData = parsed['2026-10'];
+            const activeNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+            const testDist = distributeEmployeesToTeams(categoryEmployees, activeNumTeams);
+
+            for (const { team, members } of testDist) {
+              if (members.length > 1) {
+                // Checa folgas regulares (dias que não são domingos)
+                const regularOffsets = members
+                  .map((m) => {
+                    const offs = novData[m.id] || {};
+                    for (let d = 1; d <= 30; d++) {
+                      const isSunday = new Date(2026, 10, d).getDay() === 0;
+                      if (!isSunday && offs[d] === true) {
+                        return d % 6;
+                      }
+                    }
+                    return null;
+                  })
+                  .filter((x) => x !== null);
+
+                const uniqueOffsets = new Set(regularOffsets);
+                if (uniqueOffsets.size > 1) {
+                  hasAnomaly = true;
+                  console.warn(
+                    `Dessincronização detectada na ${team.name}. Forçando regeneração limpa da escala...`
+                  );
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!hasAnomaly) {
+            return parsed;
+          }
+          console.warn('Detectada escala local inconsistente ou dessincronizada. Regenerando escala corrigida...');
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao carregar escalas do banco local:', e);
+    }
+    const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+    return {
+      '2026-10': buildInitialNovemberSchedule(
+        employees,
+        shift.id,
+        roleName,
+        initialNumTeams,
+        '5x1'
+      ),
+    };
+  });
+
+  // Salva no banco de dados local (localStorage) sempre que qualquer folga ou escala mudar
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeySchedules, JSON.stringify(monthlySchedules));
+    } catch (e) {
+      console.error('Erro ao persistir escalas no banco local:', e);
+    }
+  }, [monthlySchedules, storageKeySchedules]);
+
+  // 6. Afastamentos (Férias e Atestados) - Carrega do banco local
+  const [leaves, setLeaves] = useState<EmployeeLeave[]>(() => {
+    try {
+      const saved = localStorage.getItem(storageKeyLeaves);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao ler afastamentos do banco local:', e);
+    }
+    if (shift.id === 'manha' && roleName.toLowerCase() === 'operador de bloco') {
+      return [
+        {
+          id: 'leave-1',
+          employeeId: '3', // Dalmo Cabral
+          type: 'FERIAS',
+          startDate: '2026-11-05',
+          endDate: '2026-11-19',
+          observation: 'Férias regulamentares 15 dias',
+        },
+      ];
+    }
+    return [];
+  });
+
+  // Salva afastamentos no banco local
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeyLeaves, JSON.stringify(leaves));
+    } catch (e) {
+      console.error('Erro ao salvar afastamentos no banco local:', e);
+    }
+  }, [leaves, storageKeyLeaves]);
+
+  // Sempre que mudar o mês visualizado, reseta a rolagem horizontal para o Dia 01
+  useEffect(() => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = 0;
+    }
+  }, [viewMonth, viewYear]);
+
+  // Drag and drop state para movimentação entre equipes e reordenação
+  const [draggedEmpId, setDraggedEmpId] = useState<string | null>(null);
+  const [dragOverEmpId, setDragOverEmpId] = useState<string | null>(null);
+  const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null);
+
+  // Floating menu anchor state (Posição em relação à tela usando getBoundingClientRect)
+  const [menuAnchor, setMenuAnchor] = useState<{
+    employee: Employee;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  // Leave Modal state
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [selectedEmpForLeave, setSelectedEmpForLeave] = useState<Employee | null>(null);
+  const [selectedLeaveType, setSelectedLeaveType] = useState<LeaveType>('FERIAS');
+  const [selectedExistingLeave, setSelectedExistingLeave] = useState<EmployeeLeave | null>(null);
+
+  // Fecha o menu flutuante ao rolar a página ou tabela
+  useEffect(() => {
+    const handleScroll = () => {
+      if (menuAnchor) setMenuAnchor(null);
+    };
+    window.addEventListener('scroll', handleScroll, true);
+    return () => window.removeEventListener('scroll', handleScroll, true);
+  }, [menuAnchor]);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const currentMonthKey = `${viewYear}-${viewMonth}`;
+  const currentMonthSchedule = monthlySchedules[currentMonthKey] || {};
+  const isCurrentMonthGenerated = Object.keys(currentMonthSchedule).length > 0;
+
+  // Days columns for currently viewed month
+  const dateColumns = useMemo(() => {
+    return generateMonthDays(viewYear, viewMonth);
+  }, [viewYear, viewMonth]);
+
+  // Navigate viewed month
+  const handlePrevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear((y) => y - 1);
+    } else {
+      setViewMonth((m) => m - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear((y) => y + 1);
+    } else {
+      setViewMonth((m) => m + 1);
+    }
+  };
+
+  // Toggle cell directly in currently viewed month
+  const handleToggleCell = (empId: string, dayNumber: number) => {
+    setMonthlySchedules((prev) => {
+      const monthData = prev[currentMonthKey] || {};
+      const empOff = monthData[empId] || {};
+      const isCurrentlyOff = empOff[dayNumber] ?? false;
+
+      return {
+        ...prev,
+        [currentMonthKey]: {
+          ...monthData,
+          [empId]: {
+            ...empOff,
+            [dayNumber]: !isCurrentlyOff,
+          },
+        },
+      };
+    });
+  };
+
+  // Open menu on click at employee name
+  const handleOpenMenu = (e: React.MouseEvent, emp: Employee) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuHeight = 175;
+    const openUpwards = rect.bottom + menuHeight > window.innerHeight;
+    const top = openUpwards ? Math.max(10, rect.top - menuHeight) : rect.bottom + 6;
+    const left = Math.min(rect.left, window.innerWidth - 260);
+
+    setMenuAnchor({
+      employee: emp,
+      top,
+      left,
+    });
+  };
+
+  // Open Leave Modal for specific employee and type
+  const handleOpenLeaveModal = (emp: Employee, leaveType: LeaveType) => {
+    setMenuAnchor(null);
+    setSelectedEmpForLeave(emp);
+    setSelectedLeaveType(leaveType);
+
+    // Check if employee already has an active leave
+    const existing = leaves.find((l) => l.employeeId === emp.id) || null;
+    setSelectedExistingLeave(existing);
+    setIsLeaveModalOpen(true);
+  };
+
+  // Save Leave (Férias ou Atestado)
+  const handleSaveLeave = (leaveData: Omit<EmployeeLeave, 'id'>) => {
+    const newLeave: EmployeeLeave = {
+      ...leaveData,
+      id: `leave-${Date.now()}`,
+    };
+
+    setLeaves((prev) => [
+      // Remove any previous leave for this employee to update with the new one
+      ...prev.filter((l) => l.employeeId !== leaveData.employeeId),
+      newLeave,
+    ]);
+
+    const label = leaveData.type === 'FERIAS' ? 'Férias aplicadas' : 'Atestado aplicado';
+    showToast(`🏖️ ${label} com sucesso para ${selectedEmpForLeave?.name}!`);
+  };
+
+  // Remove Leave
+  const handleRemoveLeave = (leaveId: string) => {
+    setLeaves((prev) => prev.filter((l) => l.id !== leaveId));
+    showToast('Afastamento removido da escala.');
+  };
+
+  // MOVIMENTAÇÃO DE COLABORADOR (TRANSFERÊNCIA DE EQUIPE OU REORDENAÇÃO)
+  // Permite qualquer quantidade de colaboradores por equipe (ex: 4 em uma e 2 na outra)
+  // e reajusta as folgas automaticamente se mudar de equipe
+  const handleMoveCollaborator = (
+    sourceEmpId: string,
+    targetTeamId: number,
+    targetEmpId?: string
+  ) => {
+    const movedEmp = categoryEmployees.find((e) => e.id === sourceEmpId);
+    if (!movedEmp) return;
+
+    // Identifica a equipe de origem do colaborador
+    let sourceTeamId: number | null = null;
+    for (const [tIdStr, members] of Object.entries(teamAssignments)) {
+      if (members.includes(sourceEmpId)) {
+        sourceTeamId = Number(tIdStr);
+        break;
+      }
+    }
+    if (sourceTeamId === null) {
+      sourceTeamId = employeeTeamMap.get(sourceEmpId)?.id ?? 0;
+    }
+
+    // Se estiver soltando no mesmo colaborador na mesma equipe, nada a fazer
+    if (sourceTeamId === targetTeamId && targetEmpId === sourceEmpId) {
+      return;
+    }
+
+    // Monta o novo mapeamento de equipes garantindo isolamento total entre equipes
+    const nextAssignments: Record<number, string[]> = {};
+    for (let i = 0; i < settings.numTeams; i++) {
+      nextAssignments[i] = [...(teamAssignments[i] || [])];
+    }
+
+    // 1. Remove de QUALQUER equipe onde possa estar (garantindo que fique em apenas 1 equipe e sem duplicatas)
+    for (const tId in nextAssignments) {
+      nextAssignments[tId] = nextAssignments[tId].filter((id: string) => id !== sourceEmpId);
+    }
+
+    // 2. Insere na equipe de destino (equipe de destino fica com 1 a mais, ex: 3 -> 4)
+    if (!nextAssignments[targetTeamId]) {
+      nextAssignments[targetTeamId] = [];
+    }
+
+    if (targetEmpId && targetEmpId !== sourceEmpId) {
+      const targetIdx = nextAssignments[targetTeamId].indexOf(targetEmpId);
+      if (targetIdx !== -1) {
+        nextAssignments[targetTeamId].splice(targetIdx, 0, sourceEmpId);
+      } else {
+        nextAssignments[targetTeamId].push(sourceEmpId);
+      }
+    } else {
+      nextAssignments[targetTeamId].push(sourceEmpId);
+    }
+
+    setTeamAssignments(nextAssignments);
+
+    // 3. Se mudou de equipe, reajusta as folgas automaticamente nos meses existentes
+    if (sourceTeamId !== targetTeamId) {
+      const destTeam = TEAMS.find((t: TeamConfig) => t.id === targetTeamId) || TEAMS[targetTeamId];
+
+      setMonthlySchedules((prev) => {
+        const next = { ...prev };
+
+        Object.keys(next).forEach((monthKey) => {
+          const monthSchedule = { ...next[monthKey] };
+
+          // Padrão de dias de folga da equipe de destino (sincronizado e puro)
+          const firstOff = getInitialTeamOffDay(
+            targetTeamId,
+            settings.numTeams,
+            settings.scaleType
+          );
+          const cycleLen =
+            settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+          const destPattern: Record<number, boolean> = {};
+          for (let d = 1; d <= 31; d++) {
+            destPattern[d] = ((d - firstOff) % cycleLen + cycleLen) % cycleLen === 0;
+          }
+
+          monthSchedule[sourceEmpId] = destPattern;
+
+          next[monthKey] = monthSchedule;
+        });
+
+        return next;
+      });
+
+      showToast(
+        `🔄 ${movedEmp.name} transferido para a ${destTeam?.name || `Equipe ${targetTeamId + 1}`} (${nextAssignments[targetTeamId].length} colaboradores). Folgas reajustadas automaticamente!`
+      );
+    } else {
+      showToast(`↕️ Posição de ${movedEmp.name} reordenada na equipe.`);
+    }
+
+    // Persiste no master de colaboradores ordenado por equipes
+    if (onReorderEmployees) {
+      const flattened: Employee[] = [];
+      const empMap = new Map<string, Employee>();
+      categoryEmployees.forEach((e) => empMap.set(e.id, e));
+
+      for (let i = 0; i < settings.numTeams; i++) {
+        (nextAssignments[i] || []).forEach((id) => {
+          const emp = empMap.get(id);
+          if (emp) flattened.push(emp);
+        });
+      }
+      onReorderEmployees(flattened);
+    }
+  };
+
+  // Mover diretamente para uma equipe pelo menu de opções
+  const handleMoveToTeam = (emp: Employee, targetTeamId: number) => {
+    setMenuAnchor(null);
+    handleMoveCollaborator(emp.id, targetTeamId);
+  };
+
+  // Handlers de Drag and Drop
+  const handleDragStart = (e: React.DragEvent, empId: string) => {
+    e.dataTransfer.setData('text/plain', empId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedEmpId(empId);
+  };
+
+  const handleDragOverRow = (e: React.DragEvent, empId: string, teamId: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverEmpId !== empId) {
+      setDragOverEmpId(empId);
+    }
+    if (dragOverTeamId !== teamId) {
+      setDragOverTeamId(teamId);
+    }
+  };
+
+  const handleDropOnRow = (e: React.DragEvent, targetEmpId: string, targetTeamId: number) => {
+    e.preventDefault();
+    const sourceEmpId = e.dataTransfer.getData('text/plain') || draggedEmpId;
+    setDraggedEmpId(null);
+    setDragOverEmpId(null);
+    setDragOverTeamId(null);
+    if (sourceEmpId) {
+      handleMoveCollaborator(sourceEmpId, targetTeamId, targetEmpId);
+    }
+  };
+
+  const handleDropOnTeam = (e: React.DragEvent, targetTeamId: number) => {
+    e.preventDefault();
+    const sourceEmpId = e.dataTransfer.getData('text/plain') || draggedEmpId;
+    setDraggedEmpId(null);
+    setDragOverEmpId(null);
+    setDragOverTeamId(null);
+    if (sourceEmpId) {
+      handleMoveCollaborator(sourceEmpId, targetTeamId);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedEmpId(null);
+    setDragOverEmpId(null);
+    setDragOverTeamId(null);
+  };
+
+  // Helper to check if a specific day is covered by Férias or Atestado
+  const getDayLeave = (empId: string, fullDate: string): EmployeeLeave | null => {
+    return (
+      leaves.find(
+        (l) => l.employeeId === empId && fullDate >= l.startDate && fullDate <= l.endDate
+      ) || null
+    );
+  };
+
+  // Gerador de Escala Mensal (com suporte a Continuidade, Equipes Customizadas e Folga Compensatória Dominical)
+  const generateScheduleForMonth = (
+    targetMonth: number,
+    targetYear: number,
+    cfg: CategoryScheduleSettings,
+    mode: GenerationMode,
+    compensatorySunday: CompensatorySundayMode = 'auto',
+    explicitTeams?: { team: TeamConfig; members: Employee[] }[]
+  ) => {
+    const targetKey = `${targetYear}-${targetMonth}`;
+    const daysInTarget = new Date(targetYear, targetMonth + 1, 0).getDate();
+
+    // Dados do mês anterior para cálculo de continuidade
+    const pMonth = targetMonth === 0 ? 11 : targetMonth - 1;
+    const pYear = targetMonth === 0 ? targetYear - 1 : targetYear;
+    const pKey = `${pYear}-${pMonth}`;
+    const prevMonthData = monthlySchedules[pKey];
+    const prevMonthTotalDays = new Date(pYear, pMonth + 1, 0).getDate();
+
+    // USA AS EQUIPES COM A QUANTIDADE ATUAL (OU EXPLICITAMENTE PASSADAS)
+    const teams = explicitTeams ?? distributedTeams;
+    const newMonthData: Record<string, Record<number, boolean>> = {};
+    const cycleLen = cfg.scaleType === '5x1' ? 6 : cfg.scaleType === '6x1' ? 7 : 2;
+
+    teams.forEach(({ team, members }) => {
+      if (members.length === 0) return;
+
+      // O ciclo de folgas pertence à EQUIPE. Todos os membros da mesma equipe
+      // devem trabalhar e folgar de forma rigorosamente sincronizada!
+      let teamFirstOffDay = getInitialTeamOffDay(team.id, cfg.numTeams, cfg.scaleType);
+
+      if (mode === 'continuidade' && prevMonthData) {
+        // Encontra o histórico dos membros da equipe no mês anterior
+        const membersWithHistory = members.filter((m) => prevMonthData[m.id]);
+        if (membersWithHistory.length > 0) {
+          const workedCounts = membersWithHistory.map((m) => {
+            const empPrevOffs = prevMonthData[m.id] || {};
+            let worked = 0;
+            for (let d = prevMonthTotalDays; d >= 1; d--) {
+              if (empPrevOffs[d] === true) break;
+              worked++;
+            }
+            return worked;
+          });
+
+          // Encontra a contagem de trabalho consecutivo mais comum na equipe
+          const freqMap = new Map<number, number>();
+          workedCounts.forEach((w) => freqMap.set(w, (freqMap.get(w) || 0) + 1));
+          let bestWorked = workedCounts[0];
+          let maxF = 0;
+          freqMap.forEach((f, w) => {
+            if (f > maxF) {
+              maxF = f;
+              bestWorked = w;
+            }
+          });
+
+          if (cfg.scaleType === '5x1') {
+            const workedMod = bestWorked % 6;
+            teamFirstOffDay = workedMod === 5 ? 1 : (6 - workedMod);
+          } else if (cfg.scaleType === '6x1') {
+            const workedMod = bestWorked % 7;
+            teamFirstOffDay = workedMod === 6 ? 1 : (7 - workedMod);
+          } else if (cfg.scaleType === '12x36') {
+            teamFirstOffDay = bestWorked > 0 ? 1 : 2;
+          }
+        }
+      }
+
+      // Aplica o primeiro dia de folga da equipe a TODOS os membros da equipe de forma idêntica e sincronizada
+      members.forEach((emp) => {
+        const empDays: Record<number, boolean> = {};
+        for (let d = 1; d <= daysInTarget; d++) {
+          const isOff = ((d - teamFirstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+          empDays[d] = isOff;
+        }
+        newMonthData[emp.id] = empDays;
+      });
+    });
+
+    // FOLGA COMPENSATÓRIA DE DOMINGO (1 DOMINGO POR MÊS - LEGISLAÇÃO / CLT)
+    // Se o administrador optou por 'auto', distribui equilibradamente quem ficou com 0 domingos
+    // Exemplo: 5 colaboradores em 4 domingos = 2, 1, 1, 1; em 5 domingos = 1, 1, 1, 1, 1
+    if (compensatorySunday === 'auto') {
+      const sundays: number[] = [];
+      for (let d = 1; d <= daysInTarget; d++) {
+        const date = new Date(targetYear, targetMonth, d);
+        if (date.getDay() === 0) {
+          sundays.push(d);
+        }
+      }
+
+      const numSundays = sundays.length;
+
+      if (numSundays > 0) {
+        teams.forEach(({ members }) => {
+          // Identifica colaboradores desta equipe com 0 domingos de folga
+          const zeroSundayEmployees = members.filter((emp) => {
+            const empDays = newMonthData[emp.id] || {};
+            const sunOffCount = sundays.filter((sDay) => empDays[sDay] === true).length;
+            return sunOffCount === 0;
+          });
+
+          const totalZero = zeroSundayEmployees.length;
+          if (totalZero === 0) return;
+
+          // Distribui os colaboradores com 0 domingos equilibradamente nos domingos do mês
+          // IMPORTANTE: Concede a folga dominical como folga adicional/compensatória sem remover a folga regular.
+          // Isso impede que qualquer colaborador trabalhe períodos abusivos (> 5 ou 6 dias seguidos)
+          // e mantém todos os membros da equipe sincronizados nas suas folgas padrão da escala.
+          zeroSundayEmployees.forEach((emp, index) => {
+            const assignedSundayIdx = index % numSundays;
+            const targetSunday = sundays[assignedSundayIdx];
+            newMonthData[emp.id][targetSunday] = true;
+          });
+        });
+      }
+    }
+
+    setMonthlySchedules((prev) => ({
+      ...prev,
+      [targetKey]: newMonthData,
+    }));
+
+    setViewMonth(targetMonth);
+    setViewYear(targetYear);
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = 0;
+    }
+  };
+
+  // CONFIRMAÇÃO DE GERAÇÃO (Modal Gerar Folga)
+  const handleConfirmGenerate = (options: GenerateFolgaOptions) => {
+    generateScheduleForMonth(
+      options.targetMonth,
+      options.targetYear,
+      settings,
+      options.mode,
+      options.compensatorySunday ?? 'auto'
+    );
+
+    const modeLabel = options.mode === 'continuidade' ? 'com continuidade do mês anterior' : 'como nova escala';
+    const compLabel = options.compensatorySunday === 'manual' ? ' (Folga compensatória: manual)' : ' (Folga compensatória dominical automática aplicada)';
+    showToast(
+      `✨ Escala gerada ${modeLabel}${compLabel} para ${MONTH_NAMES[options.targetMonth]}/${options.targetYear}!`
+    );
+  };
+
+  // Exportar Escala para Excel com Formatação Completa de Cores
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await exportScheduleToExcel({
+        roleName,
+        shift,
+        month: viewMonth,
+        year: viewYear,
+        dateColumns,
+        distributedTeams,
+        schedule: currentMonthSchedule,
+        leaves,
+        scaleType: settings.scaleType,
+      });
+      showToast('📊 Planilha Excel (.xlsx) baixada com sucesso com todas as cores!');
+    } catch (err) {
+      console.error('Erro na exportação Excel:', err);
+      showToast('❌ Erro ao exportar planilha Excel.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Reset current month
+  const handleResetCurrentMonth = () => {
+    setMonthlySchedules((prev) => {
+      const next = { ...prev };
+      delete next[currentMonthKey];
+      return next;
+    });
+    showToast(`Escala de ${MONTH_NAMES[viewMonth]}/${viewYear} resetada.`);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased p-4 sm:p-8 flex flex-col font-sans">
+      <div className="max-w-[1650px] w-full mx-auto space-y-4">
+        {/* Top: Voltar e Resumo de Equipes */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <button
+            onClick={onBack}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs hover:bg-slate-50 transition self-start"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Voltar aos Setores do {shift.title}</span>
+          </button>
+
+          {/* Resumo elegante das Equipes com Drop Target para transferência rápida */}
+          <div className="flex items-center gap-2 bg-white px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs shadow-xs overflow-x-auto">
+            <span className="font-semibold text-slate-400 mr-1 flex items-center gap-1.5 shrink-0">
+              <Users className="w-3.5 h-3.5 text-blue-600" />
+              Equipes:
+            </span>
+            {distributedTeams.map(({ team, members }) => (
+              <div
+                key={team.id}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverTeamId !== team.id) setDragOverTeamId(team.id);
+                }}
+                onDragLeave={() => setDragOverTeamId(null)}
+                onDrop={(e) => handleDropOnTeam(e, team.id)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shrink-0 transition-all cursor-pointer ${
+                  team.badgeClass
+                } ${
+                  dragOverTeamId === team.id
+                    ? 'ring-2 ring-blue-500 scale-105 shadow-md bg-blue-100 font-extrabold text-blue-900'
+                    : 'hover:shadow-2xs'
+                }`}
+                title={`Arraste um colaborador aqui para transferir para a ${team.name}`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full inline-block"
+                  style={{ backgroundColor: team.dotColor }}
+                ></span>
+                <span>{team.name}:</span>
+                <span className="font-extrabold">{members.length}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Toolbar Header com Navegação de Mês e Botões */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-3xl border border-slate-200/80 shrink-0">
+              <span>{roleEmoji}</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+                  {roleName}
+                </h1>
+                <span className="text-xs bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-md border border-blue-200">
+                  Escala {settings.scaleType}
+                </span>
+                {isCurrentMonthGenerated ? (
+                  <span className="text-[11px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Gerada
+                  </span>
+                ) : (
+                  <span className="text-[11px] bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded-md border border-amber-200">
+                    Aguardando Geração
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {shift.emoji} {shift.title} • {categoryEmployees.length} colaboradores • Arraste para mudar de equipe ou clique no nome para <strong>Férias/Atestado/Mudar Equipe</strong>
+              </p>
+            </div>
+          </div>
+
+          {/* Centro: Seletor de Mês de Visualização */}
+          <div className="flex items-center justify-center bg-slate-100 p-1 rounded-xl border border-slate-200 self-center">
+            <button
+              onClick={handlePrevMonth}
+              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-white rounded-lg transition shadow-2xs"
+              title="Mês anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div className="px-4 flex items-center gap-2 text-xs font-bold text-slate-800">
+              <Calendar className="w-4 h-4 text-blue-600" />
+              <span>
+                {MONTH_NAMES[viewMonth]} de {viewYear}
+              </span>
+            </div>
+
+            <button
+              onClick={handleNextMonth}
+              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-white rounded-lg transition shadow-2xs"
+              title="Próximo mês"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Botões: Configuração e Gerar Folga */}
+          <div className="flex items-center gap-2.5 self-end lg:self-auto flex-wrap">
+            {/* Botão Configuração */}
+            <button
+              onClick={() => setIsConfigOpen(true)}
+              className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs transition"
+            >
+              <Settings className="w-4 h-4 text-slate-500" />
+              <span>Configuração</span>
+            </button>
+
+            {/* Botão Gerar Folga */}
+            <button
+              onClick={() => setIsGenerateModalOpen(true)}
+              disabled={categoryEmployees.length === 0}
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition active:scale-98"
+            >
+              <Wand2 className="w-4 h-4" />
+              <span>Gerar Folga</span>
+            </button>
+
+            {/* Botão Exportar Excel */}
+            <button
+              onClick={handleExportExcel}
+              disabled={categoryEmployees.length === 0 || isExporting}
+              className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition active:scale-98"
+              title="Baixar planilha Excel (.xlsx) formatada com as cores oficiais das equipes, folgas, férias e atestados"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>{isExporting ? 'Exportando...' : 'Exportar Excel'}</span>
+            </button>
+
+            {/* Reset */}
+            <button
+              onClick={handleResetCurrentMonth}
+              className="p-2.5 bg-white hover:bg-slate-50 text-slate-500 rounded-xl border border-slate-200 transition"
+              title="Resetar mês atual"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Se NÃO houver colaboradores na categoria */}
+        {categoryEmployees.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-4 border border-blue-100 text-2xl">
+              <span>{roleEmoji}</span>
+            </div>
+            <h2 className="text-base font-bold text-slate-900">
+              Nenhum colaborador com a função "{roleName}" cadastrado no {shift.title}
+            </h2>
+            <p className="text-xs text-slate-500 max-w-md mx-auto mt-1.5 leading-relaxed">
+              O sistema só exibe colaboradores cadastrados nesta categoria.
+            </p>
+            <div className="mt-6">
+              <button
+                onClick={onGoToRegistration}
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Ir para Cadastro de Colaborador</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* TABELA ESTILO EXCEL COM SUPORTE A FÉRIAS E ATESTADO */
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div ref={tableContainerRef} className="overflow-x-auto scroll-smooth">
+              <table className="border-collapse text-xs w-full select-none">
+                {/* Cabeçalho da Tabela */}
+                <thead>
+                  <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
+                    {/* Coluna 1: Matrícula */}
+                    <th className="sticky left-0 z-20 bg-slate-50 border-r border-slate-200 py-3 px-3 text-center font-bold text-[11px] text-slate-600 uppercase tracking-wider min-w-[85px] shadow-xs">
+                      Matrícula
+                    </th>
+
+                    {/* Coluna 2: Dom. Mês */}
+                    <th className="sticky left-[85px] z-20 bg-slate-50 border-r border-slate-200 py-3 px-2 text-center font-bold text-[10px] text-slate-600 uppercase tracking-wider min-w-[75px] shadow-xs leading-tight">
+                      Dom. Mês
+                    </th>
+
+                    {/* Coluna 3: Colaborador */}
+                    <th className="sticky left-[160px] z-20 bg-slate-50 border-r border-slate-200 py-3 px-4 text-left font-bold text-[11px] text-slate-600 uppercase tracking-wider min-w-[240px] shadow-xs">
+                      Colaborador (Clique p/ Afastamento)
+                    </th>
+
+                    {/* Colunas de Datas do Mês Visualizado */}
+                    {dateColumns.map((col) => (
+                      <th
+                        key={col.dateKey}
+                        className={`border-r border-slate-200 px-1 py-2 min-w-[48px] text-center transition-colors ${
+                          col.isSunday
+                            ? 'bg-rose-50/70 text-rose-800'
+                            : col.isSaturday
+                            ? 'bg-amber-50/50 text-amber-900'
+                            : 'bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div className="text-[9px] font-bold text-slate-400 tracking-wider">
+                          {col.dayShort}
+                        </div>
+                        <div
+                          className={`text-xs font-bold mt-0.5 ${
+                            col.isSunday ? 'text-rose-700 font-extrabold' : 'text-slate-800'
+                          }`}
+                        >
+                          {col.dd}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                {/* Linhas dos Colaboradores */}
+                <tbody className="divide-y divide-slate-100">
+                  {distributedTeams.map(({ team, members }) => {
+                    if (members.length === 0) {
+                      return (
+                        <tr
+                          key={`empty-team-${team.id}`}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            if (dragOverTeamId !== team.id) setDragOverTeamId(team.id);
+                          }}
+                          onDragLeave={() => setDragOverTeamId(null)}
+                          onDrop={(e) => handleDropOnTeam(e, team.id)}
+                          className={`border-b-2 border-dashed transition-colors h-12 ${
+                            dragOverTeamId === team.id
+                              ? 'bg-blue-100/70 border-blue-500'
+                              : 'bg-slate-50/60 border-slate-300'
+                          }`}
+                        >
+                          <td
+                            colSpan={3 + dateColumns.length}
+                            className="text-center py-2 text-xs font-semibold text-slate-500"
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: team.dotColor }}
+                              />
+                              <span>{team.name} está sem colaboradores.</span>
+                              <span className="text-blue-600 font-bold underline">
+                                Solte um colaborador aqui para transferir para esta equipe
+                              </span>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return members.map((emp) => {
+                      const empOffs = currentMonthSchedule[emp.id] || {};
+
+                      // Verifica se o colaborador tem algum afastamento ativo
+                      const activeLeave = leaves.find((l) => l.employeeId === emp.id);
+
+                      // Contagem de Domingos de Folga no mês visualizado (excluindo férias)
+                      const sundayOffsCount = dateColumns.filter((c) => {
+                        const dayLeave = getDayLeave(emp.id, c.fullDate);
+                        if (dayLeave) return false;
+                        return c.isSunday && empOffs[c.dayNumber] === true;
+                      }).length;
+
+                      const isBeingDragged = draggedEmpId === emp.id;
+                      const isDragOver = dragOverEmpId === emp.id;
+
+                      return (
+                        <tr
+                          key={emp.id}
+                          draggable={true}
+                          onDragStart={(e) => handleDragStart(e, emp.id)}
+                          onDragOver={(e) => handleDragOverRow(e, emp.id, team.id)}
+                          onDrop={(e) => handleDropOnRow(e, emp.id, team.id)}
+                          onDragEnd={handleDragEnd}
+                          className={`transition-colors h-11 ${
+                            isBeingDragged
+                              ? 'opacity-30 bg-blue-100/60'
+                              : isDragOver
+                              ? 'bg-blue-50 border-t-2 border-blue-600 shadow-inner'
+                              : 'hover:bg-slate-50/40'
+                          }`}
+                        >
+                          {/* 1. Matrícula Sticky */}
+                          <td className="sticky left-0 z-10 bg-white border-r border-slate-200 px-3 text-center font-mono text-xs font-semibold text-slate-500 shadow-xs">
+                            {emp.registration || '—'}
+                          </td>
+
+                          {/* 2. Dom. Mês Sticky */}
+                          <td className="sticky left-[85px] z-10 bg-white border-r border-slate-200 px-2 text-center shadow-xs">
+                            <span
+                              className={`inline-block text-xs font-bold px-2 py-0.5 rounded-md ${
+                                sundayOffsCount > 0
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {sundayOffsCount}
+                            </span>
+                          </td>
+
+                          {/* 3. Colaborador Sticky (Arrastável e Clicável para Férias/Atestado/Mudar Equipe) */}
+                          <td
+                            className={`sticky left-[160px] z-10 bg-white border-r border-slate-200 px-3 py-1 shadow-xs border-l-4 ${team.borderLeftColor}`}
+                          >
+                            <div
+                              onClick={(e) => handleOpenMenu(e, emp)}
+                              className="flex items-center justify-between gap-2 cursor-pointer p-1 rounded-lg hover:bg-slate-100 transition group"
+                              title="Arraste para mudar de posição/equipe ou clique para Férias/Atestado/Mudar Equipe"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {/* Alça de Arraste (Grip) */}
+                                <div
+                                  className="text-slate-300 group-hover:text-slate-600 cursor-grab active:cursor-grabbing p-0.5 shrink-0 transition-colors"
+                                  title="Clique e arraste para transferir de equipe ou reposicionar"
+                                >
+                                  <GripVertical className="w-3.5 h-3.5" />
+                                </div>
+
+                                <div
+                                  className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shrink-0 ${team.avatarBg}`}
+                                >
+                                  {emp.name
+                                    .split(' ')
+                                    .slice(0, 2)
+                                    .map((n) => n[0])
+                                    .join('')}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-slate-900 block text-xs truncate group-hover:text-blue-600">
+                                      {emp.name}
+                                    </span>
+                                    {activeLeave && (
+                                      <span
+                                        className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 border ${
+                                          activeLeave.type === 'FERIAS'
+                                            ? 'bg-purple-100 text-purple-800 border-purple-300'
+                                            : 'bg-rose-100 text-rose-800 border-rose-300'
+                                        }`}
+                                      >
+                                        {activeLeave.type === 'FERIAS' ? '🏖️ Férias' : '🩺 Atestado'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] font-semibold text-slate-400">
+                                    {team.name}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="text-slate-400 group-hover:text-blue-600 p-1 rounded-md group-hover:bg-blue-50 transition">
+                                <MoreVertical className="w-3.5 h-3.5" />
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Células de Datas (com suporte a Férias e Atestado) */}
+                          {dateColumns.map((col) => {
+                            const dayLeave = getDayLeave(emp.id, col.fullDate);
+                            const isOff = empOffs[col.dayNumber] === true;
+
+                            return (
+                              <td
+                                key={col.dayNumber}
+                                onClick={() => handleToggleCell(emp.id, col.dayNumber)}
+                                className="border-r border-slate-200/80 p-1 text-center cursor-pointer select-none transition-all active:scale-95"
+                                title={`${emp.name} - ${col.dd}/${String(viewMonth + 1).padStart(2, '0')}: ${
+                                  dayLeave
+                                    ? dayLeave.type === 'FERIAS'
+                                      ? 'Férias'
+                                      : 'Atestado Médico'
+                                    : isOff
+                                    ? 'Folga'
+                                    : 'Trabalho'
+                                }`}
+                              >
+                                {dayLeave ? (
+                                  /* Afastamento: Férias ou Atestado */
+                                  <div
+                                    className={`w-full h-7 rounded-md font-extrabold text-[10px] flex items-center justify-center shadow-2xs border ${
+                                      dayLeave.type === 'FERIAS'
+                                        ? 'bg-purple-100 text-purple-900 border-purple-300 hover:bg-purple-200'
+                                        : 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                                    }`}
+                                  >
+                                    {dayLeave.type === 'FERIAS' ? 'Férias' : 'Atestado'}
+                                  </div>
+                                ) : isOff ? (
+                                  /* Folga: Card branco nítido com borda suave */
+                                  <div className="w-full h-7 rounded-md bg-white border border-slate-300 text-slate-800 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-slate-100">
+                                    Folga
+                                  </div>
+                                ) : (
+                                  /* Trabalho: Bloco sólido e arredondado na cor da equipe */
+                                  <div
+                                    className={`w-full h-7 rounded-md flex items-center justify-center transition-all hover:brightness-105 shadow-2xs ${team.cellBg}`}
+                                  >
+                                    <span className="sr-only">Trabalho</span>
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    });
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Configuração (5x1, 6x1, 12x36 e Equipes) */}
+        <RoleScheduleConfigModal
+          isOpen={isConfigOpen}
+          onClose={() => setIsConfigOpen(false)}
+          roleName={roleName}
+          totalEmployees={categoryEmployees.length}
+          currentSettings={settings}
+          onSave={(newSettings) => {
+            const numTeamsChanged = newSettings.numTeams !== settings.numTeams;
+            setSettings(newSettings);
+
+            let targetTeams = distributedTeams;
+            if (numTeamsChanged || distributedTeams.length !== newSettings.numTeams) {
+              // Redistribui imediatamente para todas as novas equipes
+              const newDist = distributeEmployeesToTeams(categoryEmployees, newSettings.numTeams);
+              const newAssignments: Record<number, string[]> = {};
+              for (let i = 0; i < newSettings.numTeams; i++) {
+                newAssignments[i] = [];
+              }
+              newDist.forEach(({ team, members }) => {
+                newAssignments[team.id] = members.map((m) => m.id);
+              });
+              setTeamAssignments(newAssignments);
+              targetTeams = newDist;
+            }
+
+            generateScheduleForMonth(viewMonth, viewYear, newSettings, 'nova', 'auto', targetTeams);
+            showToast(
+              `Configurações aplicadas: Escala ${newSettings.scaleType} com ${newSettings.numTeams} equipes e folgas sincronizadas!`
+            );
+          }}
+        />
+
+        {/* Modal Gerar Folga (Escolher mês e se é Nova ou Continuidade) */}
+        <GenerateFolgaModal
+          isOpen={isGenerateModalOpen}
+          onClose={() => setIsGenerateModalOpen(false)}
+          currentViewMonth={viewMonth}
+          currentViewYear={viewYear}
+          scaleType={settings.scaleType}
+          monthlySchedules={monthlySchedules}
+          onConfirm={handleConfirmGenerate}
+        />
+
+        {/* Modal de Afastamento (Férias e Atestado com Seletor de Período) */}
+        <LeaveModal
+          isOpen={isLeaveModalOpen}
+          onClose={() => setIsLeaveModalOpen(false)}
+          employee={selectedEmpForLeave}
+          teamName={
+            selectedEmpForLeave
+              ? employeeTeamMap.get(selectedEmpForLeave.id)?.name || ''
+              : ''
+          }
+          initialType={selectedLeaveType}
+          existingLeave={selectedExistingLeave}
+          currentYear={viewYear}
+          currentMonth={viewMonth}
+          onSaveLeave={handleSaveLeave}
+          onRemoveLeave={handleRemoveLeave}
+        />
+
+        {/* Menu Flutuante ao Clicar no Colaborador (Renderizado em Camada Fixa com z-50 para NUNCA ficar atrás dos nomes) */}
+        {menuAnchor && (
+          <>
+            {/* Backdrop para fechar ao clicar fora */}
+            <div
+              className="fixed inset-0 z-50 bg-black/10"
+              onClick={() => setMenuAnchor(null)}
+            />
+
+            {/* Menu Popover Flutuante */}
+            <div
+              style={{
+                position: 'fixed',
+                top: `${menuAnchor.top}px`,
+                left: `${menuAnchor.left}px`,
+              }}
+              className="z-50 bg-white rounded-2xl shadow-2xl border border-slate-200 p-2 w-64 text-xs font-semibold animate-in fade-in zoom-in-95 duration-100 ring-1 ring-black/5"
+            >
+              {/* Cabeçalho do Menu com Identificação do Colaborador */}
+              <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between mb-1">
+                <div className="min-w-0 pr-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Afastamento
+                  </span>
+                  <span className="text-xs font-bold text-slate-900 truncate block">
+                    {menuAnchor.employee.name}
+                  </span>
+                </div>
+                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-mono shrink-0">
+                  {menuAnchor.employee.registration || 'S/M'}
+                </span>
+              </div>
+
+              {/* Opções de Afastamento */}
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'FERIAS')}
+                  className="w-full px-3 py-2.5 text-left hover:bg-purple-50 text-slate-800 hover:text-purple-700 rounded-xl flex items-center gap-3 transition group"
+                >
+                  <span className="text-xl p-1.5 bg-purple-100 text-purple-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                    🏖️
+                  </span>
+                  <div>
+                    <div className="font-bold text-xs text-slate-900 group-hover:text-purple-700">
+                      Adicionar Férias
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-normal">
+                      Definir período de descanso
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'ATESTADO')}
+                  className="w-full px-3 py-2.5 text-left hover:bg-rose-50 text-slate-800 hover:text-rose-700 rounded-xl flex items-center gap-3 transition group"
+                >
+                  <span className="text-xl p-1.5 bg-rose-100 text-rose-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                    🩺
+                  </span>
+                  <div>
+                    <div className="font-bold text-xs text-slate-900 group-hover:text-rose-700">
+                      Adicionar Atestado
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-normal">
+                      Licença médica / saúde
+                    </div>
+                  </div>
+                </button>
+
+                {(() => {
+                  const activeEmpLeave = leaves.find(
+                    (l) => l.employeeId === menuAnchor.employee.id
+                  );
+                  if (!activeEmpLeave) return null;
+
+                  return (
+                    <div className="border-t border-slate-100 pt-1 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleRemoveLeave(activeEmpLeave.id);
+                          setMenuAnchor(null);
+                        }}
+                        className="w-full px-3 py-2 text-left hover:bg-rose-50 text-rose-600 rounded-xl flex items-center gap-2 transition text-xs font-semibold"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remover Afastamento Atual</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                {/* Opção Rápida: Mover para outra Equipe */}
+                <div className="border-t border-slate-100 pt-2 mt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-1 mb-1.5 flex items-center gap-1">
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    Mover para Equipe:
+                  </span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {distributedTeams.map(({ team }) => {
+                      const isCurrentTeam =
+                        employeeTeamMap.get(menuAnchor.employee.id)?.id === team.id;
+                      if (isCurrentTeam) return null;
+
+                      return (
+                        <button
+                          key={team.id}
+                          type="button"
+                          onClick={() => handleMoveToTeam(menuAnchor.employee, team.id)}
+                          className="px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-100 text-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition border border-slate-100 hover:border-slate-300"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: team.dotColor }}
+                          />
+                          <span className="truncate">{team.colorName}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Toast Notification */}
+        {toastMessage && (
+          <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 text-xs flex items-center gap-2.5 animate-in slide-in-from-bottom-5 duration-200">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
