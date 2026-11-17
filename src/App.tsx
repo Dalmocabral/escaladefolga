@@ -236,7 +236,7 @@ export default function App() {
       {/* Imagem de Fundo do Terminal */}
       <div
         className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
-        style={{ backgroundImage: `url('/images/background.jpg')` }}
+        style={{ backgroundImage: `url('${import.meta.env.BASE_URL}images/background.jpg')` }}
       />
       {/* Película de sobreposição para realce e contraste ideal */}
       <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] pointer-events-none" />

@@ -95,50 +95,32 @@ const generateMonthDays = (year: number, month: number): DayColumn[] => {
   return columns;
 };
 
-// Regra que define o primeiro dia de folga para cada equipe (evitando colisões)
+// Regra que define o primeiro dia de folga para cada equipe (folgas contínuas e sequenciais entre as equipes)
 export const getInitialTeamOffDay = (
   teamIdx: number,
-  numTeams: number,
+  _numTeams: number,
   scaleType: ScaleType
 ): number => {
   if (scaleType === '5x1') {
-    if (numTeams === 5) {
-      // 5 Equipes em 5x1: cada equipe folga em um dia separado (idêntico à imagem 2 manual do usuário)
-      // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25, 31)
-      // Equipe 1 (Azul) -> Dia 3 (03, 09, 15, 21, 27)
-      // Equipe 2 (Amarela) -> Dia 4 (04, 10, 16, 22, 28)
-      // Equipe 3 (Vermelha) -> Dia 5 (05, 11, 17, 23, 29)
-      // Equipe 4 (Cinza) -> Dia 6 (06, 12, 18, 24, 30)
-      const offsets5 = [1, 3, 4, 5, 6];
-      return offsets5[teamIdx] ?? ((teamIdx % 6) + 1);
-    }
-    if (numTeams === 4) {
-      // 4 Equipes em 5x1: cada equipe folga em um dia diferente garantindo domingos distribuídos
-      const offsets4 = [1, 2, 4, 5];
-      return offsets4[teamIdx] ?? 1;
-    }
-    if (numTeams === 3) {
-      // 3 Equipes em 5x1: alternância perfeita a cada 2 dias (1, 3, 5)
-      // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25) -> Domingo 01
-      // Equipe 1 (Azul) -> Dia 3 (03, 09, 15, 21, 27) -> Domingo 15
-      // Equipe 2 (Amarela) -> Dia 5 (05, 11, 17, 23, 29) -> Domingo 29
-      // Todas as 3 equipes mantêm a rotação 5x1 pura e ganham 1 domingo naturalmente!
-      const offsets3 = [1, 3, 5];
-      return offsets3[teamIdx] ?? 1;
-    }
-    if (numTeams === 2) {
-      const offsets2 = [1, 4];
-      return offsets2[teamIdx] ?? 1;
-    }
+    // Escala 5x1: ciclo de 6 dias (5 trabalhados + 1 folga)
+    // Folgas contínuas e sequenciais entre as equipes (sem pular dias):
+    // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25, 31)
+    // Equipe 1 (Azul) -> Dia 2 (02, 08, 14, 20, 26)
+    // Equipe 2 (Amarela) -> Dia 3 (03, 09, 15, 21, 27)
+    // Equipe 3 (Vermelha) -> Dia 4 (04, 10, 16, 22, 28)
+    // Equipe 4 (Cinza) -> Dia 5 (05, 11, 17, 23, 29)
     return (teamIdx % 6) + 1;
   }
 
   if (scaleType === '6x1') {
+    // Escala 6x1: ciclo de 7 dias (6 trabalhados + 1 folga)
+    // Folgas contínuas e sequenciais entre as equipes:
+    // Equipe 0 -> Dia 1, Equipe 1 -> Dia 2, Equipe 2 -> Dia 3, etc.
     return (teamIdx % 7) + 1;
   }
 
-  // 12x36
-  return teamIdx % 2 === 0 ? 1 : 2;
+  // 12x36: alternância diária (Dia 1 e Dia 2)
+  return (teamIdx % 2) + 1;
 };
 
 // Gera folgas iniciais para Novembro/2026 para a categoria atual
@@ -147,42 +129,54 @@ const buildInitialNovemberSchedule = (
   shiftId: string,
   roleName: string,
   numTeams: number,
-  scaleType: ScaleType
+  scaleType: ScaleType,
+  savedAssignments?: Record<number, string[]>
 ): Record<string, Record<number, boolean>> => {
   const schedule: Record<string, Record<number, boolean>> = {};
   const catEmployees = employees.filter(
     (e) => e.shiftId === shiftId && e.role.toLowerCase() === roleName.toLowerCase()
   );
-  const teams = distributeEmployeesToTeams(catEmployees, numTeams);
   const cycleLen = scaleType === '5x1' ? 6 : scaleType === '6x1' ? 7 : 2;
 
   // Domingos em Novembro de 2026: 01, 08, 15, 22, 29 (5 domingos)
   const novSundays = [1, 8, 15, 22, 29];
   const numNovSundays = novSundays.length;
 
-  teams.forEach(({ members }, teamIdx) => {
-    const firstOffDay = getInitialTeamOffDay(teamIdx, numTeams, scaleType);
+  let teamGroups: { teamId: number; memberIds: string[] }[] = [];
+  if (savedAssignments && Object.keys(savedAssignments).length > 0) {
+    teamGroups = Object.entries(savedAssignments).map(([tId, ids]) => ({
+      teamId: Number(tId),
+      memberIds: ids,
+    }));
+  } else {
+    const teams = distributeEmployeesToTeams(catEmployees, numTeams);
+    teamGroups = teams.map(({ team, members }) => ({
+      teamId: team.id,
+      memberIds: members.map((m) => m.id),
+    }));
+  }
 
-    members.forEach((emp) => {
+  teamGroups.forEach(({ teamId, memberIds }) => {
+    const firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType);
+
+    memberIds.forEach((empId) => {
       const daysOff: Record<number, boolean> = {};
       for (let d = 1; d <= 30; d++) {
         daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
       }
-      schedule[emp.id] = daysOff;
+      schedule[empId] = daysOff;
     });
 
     // Distribuição de folga compensatória para quem ficou com 0 domingos
-    const zeroSundayMembers = members.filter((emp) => {
-      const offs = schedule[emp.id] || {};
+    const zeroSundayEmpIds = memberIds.filter((empId) => {
+      const offs = schedule[empId] || {};
       return novSundays.filter((s) => offs[s] === true).length === 0;
     });
 
-    if (zeroSundayMembers.length > 0) {
-      // Concede a folga dominical como folga compensatória adicional sem remover a folga regular da equipe
-      // (evitando criar períodos abusivos de mais de 5 ou 6 dias consecutivos trabalhados)
-      zeroSundayMembers.forEach((emp, idx) => {
+    if (zeroSundayEmpIds.length > 0) {
+      zeroSundayEmpIds.forEach((empId, idx) => {
         const targetSunday = novSundays[idx % numNovSundays];
-        schedule[emp.id][targetSunday] = true;
+        schedule[empId][targetSunday] = true;
       });
     }
   });
@@ -333,6 +327,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     const unassigned = categoryEmployees.filter((e) => !allAssigned.has(e.id));
     if (unassigned.length > 0) {
       needsUpdate = true;
+      const newAssignmentsPerTeam: Record<number, string[]> = {};
+
       unassigned.forEach((emp) => {
         if (!allAssigned.has(emp.id)) {
           allAssigned.add(emp.id);
@@ -346,14 +342,88 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             }
           }
           sanitized[smallestTeamId].push(emp.id);
+          if (!newAssignmentsPerTeam[smallestTeamId]) {
+            newAssignmentsPerTeam[smallestTeamId] = [];
+          }
+          newAssignmentsPerTeam[smallestTeamId].push(emp.id);
         }
       });
+
+      if (needsUpdate) {
+        setTeamAssignments(sanitized);
+      }
+
+      // Adiciona folgas para os novos colaboradores nos meses já gerados,
+      // herdando EXATAMENTE a mesma folga da equipe onde foram inseridos sem alterar ninguém existente!
+      setMonthlySchedules((prev) => {
+        const next = { ...prev };
+        let hasChanges = false;
+
+        Object.keys(next).forEach((mKey) => {
+          const monthSchedule = { ...next[mKey] };
+          if (Object.keys(monthSchedule).length === 0) return;
+
+          const [yStr, mStr] = mKey.split('-');
+          const y = Number(yStr);
+          const m = Number(mStr);
+          const daysInM = new Date(y, m + 1, 0).getDate();
+          const cycleLen = settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+
+          for (const [tIdStr, newEmpIds] of Object.entries(newAssignmentsPerTeam)) {
+            const teamId = Number(tIdStr);
+            // Procura um membro da equipe já existente no mês para herdar a folga sincronizada
+            const existingMemberId = sanitized[teamId]?.find(
+              (id) => !newEmpIds.includes(id) && monthSchedule[id]
+            );
+
+            let teamFirstOff = getInitialTeamOffDay(teamId, settings.numTeams, settings.scaleType);
+
+            if (existingMemberId && monthSchedule[existingMemberId]) {
+              const existingOffs = monthSchedule[existingMemberId];
+              for (let d = 1; d <= 7; d++) {
+                if (existingOffs[d] === true) {
+                  teamFirstOff = d;
+                  break;
+                }
+              }
+            }
+
+            newEmpIds.forEach((empId) => {
+              if (!monthSchedule[empId]) {
+                const empDays: Record<number, boolean> = {};
+                for (let d = 1; d <= daysInM; d++) {
+                  empDays[d] = ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                }
+
+                // Verifica se tem domingo
+                const sundays: number[] = [];
+                for (let d = 1; d <= daysInM; d++) {
+                  if (new Date(y, m, d).getDay() === 0) sundays.push(d);
+                }
+                const hasSunday = sundays.some((s) => empDays[s] === true);
+                if (!hasSunday && sundays.length > 0) {
+                  empDays[sundays[0]] = true;
+                }
+
+                monthSchedule[empId] = empDays;
+                hasChanges = true;
+              }
+            });
+          }
+
+          next[mKey] = monthSchedule;
+        });
+
+        return hasChanges ? next : prev;
+      });
+
+      return;
     }
 
     if (needsUpdate) {
       setTeamAssignments(sanitized);
     }
-  }, [categoryEmployees, settings.numTeams, teamAssignments]);
+  }, [categoryEmployees, settings.numTeams, teamAssignments, settings.scaleType]);
 
   // Divisão de equipes respeitando a personalização flexível do usuário
   // e garantindo com 100% de segurança que NENHUM colaborador apareça duplicado na tabela
@@ -474,49 +544,22 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             if (hasAnomaly) break;
           }
 
-          // Detecta se há membros da mesma equipe com rotações diferentes/dessincronizadas no mês inicial
-          if (!hasAnomaly && parsed['2026-10']) {
-            const novData = parsed['2026-10'];
-            const activeNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
-            const testDist = distributeEmployeesToTeams(categoryEmployees, activeNumTeams);
-
-            for (const { team, members } of testDist) {
-              if (members.length > 1) {
-                // Checa folgas regulares (dias que não são domingos)
-                const regularOffsets = members
-                  .map((m) => {
-                    const offs = novData[m.id] || {};
-                    for (let d = 1; d <= 30; d++) {
-                      const isSunday = new Date(2026, 10, d).getDay() === 0;
-                      if (!isSunday && offs[d] === true) {
-                        return d % 6;
-                      }
-                    }
-                    return null;
-                  })
-                  .filter((x) => x !== null);
-
-                const uniqueOffsets = new Set(regularOffsets);
-                if (uniqueOffsets.size > 1) {
-                  hasAnomaly = true;
-                  console.warn(
-                    `Dessincronização detectada na ${team.name}. Forçando regeneração limpa da escala...`
-                  );
-                  break;
-                }
-              }
-            }
-          }
-
           if (!hasAnomaly) {
             return parsed;
           }
-          console.warn('Detectada escala local inconsistente ou dessincronizada. Regenerando escala corrigida...');
+          console.warn('Detectada escala local com períodos abusivos. Regenerando escala corrigida...');
         }
       }
     } catch (e) {
       console.error('Erro ao carregar escalas do banco local:', e);
     }
+
+    let savedAssignments: Record<number, string[]> | undefined;
+    try {
+      const savedAss = localStorage.getItem(storageKeyTeamAssignments);
+      if (savedAss) savedAssignments = JSON.parse(savedAss);
+    } catch {}
+
     const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
     return {
       '2026-10': buildInitialNovemberSchedule(
@@ -524,7 +567,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         shift.id,
         roleName,
         initialNumTeams,
-        '5x1'
+        '5x1',
+        savedAssignments
       ),
     };
   });
@@ -1327,7 +1371,26 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                     }
 
                     return members.map((emp) => {
-                      const empOffs = currentMonthSchedule[emp.id] || {};
+                      let empOffs = currentMonthSchedule[emp.id];
+                      if (!empOffs && isCurrentMonthGenerated) {
+                        // Se o colaborador acabou de ser cadastrado no setor enquanto a escala já estava gerada,
+                        // herda visualmente na hora a folga sincronizada da equipe dele
+                        const teamFirstOff = getInitialTeamOffDay(
+                          team.id,
+                          settings.numTeams,
+                          settings.scaleType
+                        );
+                        const cycleLen =
+                          settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+                        const fallbackDays: Record<number, boolean> = {};
+                        for (let d = 1; d <= dateColumns.length; d++) {
+                          fallbackDays[d] =
+                            ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                        }
+                        empOffs = fallbackDays;
+                      } else if (!empOffs) {
+                        empOffs = {};
+                      }
 
                       // Verifica se o colaborador tem algum afastamento ativo
                       const activeLeave = leaves.find((l) => l.employeeId === emp.id);
