@@ -60,6 +60,36 @@ export const TEAMS: TeamConfig[] = [
     dotColor: '#64748b',
     borderLeftColor: 'border-l-slate-400',
   },
+  {
+    id: 5,
+    name: 'Equipe Roxa',
+    colorName: 'Roxa',
+    cellBg: 'bg-purple-600 text-white font-medium',
+    badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
+    avatarBg: 'bg-purple-600 text-white shadow-2xs',
+    dotColor: '#9333ea',
+    borderLeftColor: 'border-l-purple-600',
+  },
+  {
+    id: 6,
+    name: 'Equipe Ciano',
+    colorName: 'Ciano',
+    cellBg: 'bg-cyan-500 text-white font-medium',
+    badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    avatarBg: 'bg-cyan-600 text-white shadow-2xs',
+    dotColor: '#06b6d4',
+    borderLeftColor: 'border-l-cyan-500',
+  },
+  {
+    id: 7,
+    name: 'Equipe Laranja',
+    colorName: 'Laranja',
+    cellBg: 'bg-orange-500 text-white font-medium',
+    badgeClass: 'bg-orange-50 text-orange-700 border-orange-200',
+    avatarBg: 'bg-orange-600 text-white shadow-2xs',
+    dotColor: '#f97316',
+    borderLeftColor: 'border-l-orange-500',
+  },
 ];
 
 export function distributeEmployeesToTeams<T>(items: T[], numTeams: number) {

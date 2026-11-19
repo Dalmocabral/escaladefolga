@@ -207,10 +207,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   onReorderEmployees,
 }) => {
   // Chaves do banco de dados local (localStorage) por turno e setor
-  const storageKeySchedules = `escala_db_schedules_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeySettings = `escala_db_settings_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeyLeaves = `escala_db_leaves_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeyTeamAssignments = `escala_db_team_assignments_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeySchedules = `escala_db_schedules_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeySettings = `escala_db_settings_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyLeaves = `escala_db_leaves_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyTeamAssignments = `escala_db_team_assignments_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -223,7 +223,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
   const isMotorista = roleName.toLowerCase() === 'motorista';
   const defaultScaleType: ScaleType = isMotorista ? '5x2' : '5x1';
-  const defaultNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+  const defaultNumTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
 
   // 1. Settings state (carrega do banco local ou inicia padrão)
   const [settings, setSettings] = useState<CategoryScheduleSettings>(() => {
@@ -232,11 +232,11 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.scaleType && parsed.numTeams) {
-          // Se houver 20+ colaboradores e as equipes salvas forem menos de 5 por padrão anterior, atualiza para 5
-          if (categoryEmployees.length >= 20 && parsed.numTeams < 5) {
+          // Se for motorista ou 20+ colaboradores e estiver com menos de 6 equipes, atualiza para 6
+          if ((isMotorista || categoryEmployees.length >= 20) && parsed.numTeams < 6) {
             return {
               ...parsed,
-              numTeams: 5,
+              numTeams: 6,
             };
           }
           return parsed;
@@ -268,7 +268,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
           const keys = Object.keys(parsed).map(Number);
-          const expectedTeams = categoryEmployees.length >= 20 ? 5 : 3;
+          const expectedTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
           if (keys.length === expectedTeams) {
             return parsed;
           }
@@ -278,7 +278,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       console.error('Erro ao ler divisões de equipe do banco local:', e);
     }
     // Distribuição inicial padrão
-    const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+    const initialNumTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
     const initialDist = distributeEmployeesToTeams(categoryEmployees, initialNumTeams);
     const initialMap: Record<number, string[]> = {};
     for (let i = 0; i < initialNumTeams; i++) {
@@ -558,8 +558,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       if (savedAss) savedAssignments = JSON.parse(savedAss);
     } catch {}
 
-    const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
-    const initialScale: ScaleType = roleName.toLowerCase() === 'motorista' ? '5x2' : '5x1';
+    const initialNumTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
+    const initialScale: ScaleType = isMotorista ? '5x2' : '5x1';
     return {
       '2026-10': buildInitialNovemberSchedule(
         employees,
@@ -611,7 +611,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           },
           {
             id: 'leave-mot-2',
-            employeeId: motEmployees[Math.min(8, motEmployees.length - 1)].id,
+            employeeId: motEmployees[Math.min(7, motEmployees.length - 1)].id,
             type: 'FERIAS',
             startDate: '2026-11-05',
             endDate: '2026-11-19',
@@ -619,7 +619,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           },
           {
             id: 'leave-mot-3',
-            employeeId: motEmployees[Math.min(16, motEmployees.length - 1)].id,
+            employeeId: motEmployees[Math.min(14, motEmployees.length - 1)].id,
             type: 'FERIAS',
             startDate: '2026-11-10',
             endDate: '2026-11-24',

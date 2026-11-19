@@ -32,6 +32,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
       2: 3,
       3: 4,
       4: 5,
+      5: 6,
     }
   );
 
@@ -143,7 +144,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
             </div>
 
             <div className="flex items-center gap-2">
-              {[2, 3, 4, 5].map((count) => (
+              {[2, 3, 4, 5, 6].map((count) => (
                 <button
                   key={count}
                   type="button"
@@ -165,7 +166,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 <Users className="w-3.5 h-3.5 text-slate-500" />
                 Distribuição Automática ({totalEmployees} colaboradores):
               </span>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {preview.map(({ team, count }) => (
                   <div
                     key={team.id}
