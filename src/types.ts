@@ -7,7 +7,7 @@ export type GenerationMode = 'nova' | 'continuidade' | 'manual';
 export type CompensatorySundayMode = 'auto' | 'manual';
 export type CompensatoryStrategy = 'swap' | 'additional';
 
-export type LeaveType = 'FERIAS' | 'ATESTADO';
+export type LeaveType = 'FERIAS' | 'ATESTADO' | 'INSS' | 'EXAME';
 
 export interface EmployeeLeave {
   id: string;

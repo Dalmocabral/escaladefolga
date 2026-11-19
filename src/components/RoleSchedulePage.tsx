@@ -722,7 +722,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
   // Toggle cell directly in currently viewed month (Configuração Manual Célula a Célula)
   const handleToggleCell = (empId: string, dayNumber: number) => {
-    // 1. Verifica se o colaborador tem afastamento ativo (Férias/Atestado) nesta data
+    // 1. Verifica se o colaborador tem afastamento ativo (Férias/Atestado/INSS/Exame) nesta data
     const activeLeave = leaves.find((l) => l.employeeId === empId);
     const dateCol = dateColumns.find((c) => c.dayNumber === dayNumber);
     if (
@@ -732,9 +732,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       dateCol.fullDate <= activeLeave.endDate
     ) {
       const emp = categoryEmployees.find((e) => e.id === empId);
-      const leaveTypeStr = activeLeave.type === 'FERIAS' ? 'Férias' : 'Atestado';
+      let leaveTypeStr = 'Férias';
+      if (activeLeave.type === 'ATESTADO') leaveTypeStr = 'Atestado Médico';
+      else if (activeLeave.type === 'INSS') leaveTypeStr = 'Afastamento INSS';
+      else if (activeLeave.type === 'EXAME') leaveTypeStr = 'Exame Periódico';
+
       showToast(
-        `🏖️ ${emp?.name || 'Colaborador'} está em período de ${leaveTypeStr} neste dia. Clique no nome dele para editar ou remover o afastamento.`
+        `📌 ${emp?.name || 'Colaborador'} está em período de ${leaveTypeStr} neste dia. Clique no nome dele para editar ou remover o afastamento.`
       );
       return;
     }
@@ -769,7 +773,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   const handleOpenMenu = (e: React.MouseEvent, emp: Employee) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const menuHeight = 175;
+    const menuHeight = 280;
     const openUpwards = rect.bottom + menuHeight > window.innerHeight;
     const top = openUpwards ? Math.max(10, rect.top - menuHeight) : rect.bottom + 6;
     const left = Math.min(rect.left, window.innerWidth - 260);
@@ -793,7 +797,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     setIsLeaveModalOpen(true);
   };
 
-  // Save Leave (Férias ou Atestado)
+  // Save Leave (Férias, Atestado, INSS, Exame)
   const handleSaveLeave = (leaveData: Omit<EmployeeLeave, 'id'>) => {
     const newLeave: EmployeeLeave = {
       ...leaveData,
@@ -806,8 +810,11 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       newLeave,
     ]);
 
-    const label = leaveData.type === 'FERIAS' ? 'Férias aplicadas' : 'Atestado aplicado';
-    showToast(`🏖️ ${label} com sucesso para ${selectedEmpForLeave?.name}!`);
+    let label = 'Férias aplicadas';
+    if (leaveData.type === 'ATESTADO') label = 'Atestado aplicado';
+    else if (leaveData.type === 'INSS') label = 'Afastamento INSS aplicado';
+    else if (leaveData.type === 'EXAME') label = 'Exame registrado';
+    showToast(`✅ ${label} com sucesso para ${selectedEmpForLeave?.name || 'colaborador'}!`);
   };
 
   // Remove Leave
@@ -1221,6 +1228,130 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     showToast(`Escala de ${MONTH_NAMES[viewMonth]}/${viewYear} resetada.`);
   };
 
+  // Obtém as folgas de um colaborador (respeitando escalas salvas ou fallback)
+  const getEmployeeOffsMap = (empId: string, teamId: number): Record<number, boolean> => {
+    const empOffs = currentMonthSchedule[empId];
+    if (empOffs) return empOffs;
+    if (isCurrentMonthGenerated) return {};
+
+    const teamFirstOff = getInitialTeamOffDay(
+      teamId,
+      settings.numTeams,
+      settings.scaleType,
+      settings.customTeamOffDays
+    );
+    const cycleL =
+      settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
+    const fallbackDays: Record<number, boolean> = {};
+    for (let d = 1; d <= dateColumns.length; d++) {
+      if (settings.scaleType === '5x2') {
+        fallbackDays[d] =
+          ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
+          ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
+      } else {
+        fallbackDays[d] =
+          ((d - teamFirstOff) % cycleL + cycleL) % cycleL === 0;
+      }
+    }
+    return fallbackDays;
+  };
+
+  // Colaboradores da categoria com férias ativas no mês visualizado
+  const vacationEmployeesInMonth = useMemo(() => {
+    return categoryEmployees
+      .map((emp) => {
+        const leave = leaves.find(
+          (l) =>
+            l.employeeId === emp.id &&
+            l.type === 'FERIAS' &&
+            dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+        );
+        if (!leave) return null;
+        const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+        return {
+          employee: emp,
+          leave,
+          team,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [categoryEmployees, leaves, dateColumns, employeeTeamMap]);
+
+  // Colaboradores da categoria com atestado médico no mês visualizado
+  const atestadoEmployeesInMonth = useMemo(() => {
+    return categoryEmployees.filter((emp) =>
+      leaves.some(
+        (l) =>
+          l.employeeId === emp.id &&
+          l.type === 'ATESTADO' &&
+          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+      )
+    );
+  }, [categoryEmployees, leaves, dateColumns]);
+
+  // Colaboradores da categoria com INSS no mês visualizado
+  const inssEmployeesInMonth = useMemo(() => {
+    return categoryEmployees.filter((emp) =>
+      leaves.some(
+        (l) =>
+          l.employeeId === emp.id &&
+          l.type === 'INSS' &&
+          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+      )
+    );
+  }, [categoryEmployees, leaves, dateColumns]);
+
+  // Colaboradores da categoria com Exame no mês visualizado
+  const exameEmployeesInMonth = useMemo(() => {
+    return categoryEmployees.filter((emp) =>
+      leaves.some(
+        (l) =>
+          l.employeeId === emp.id &&
+          l.type === 'EXAME' &&
+          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+      )
+    );
+  }, [categoryEmployees, leaves, dateColumns]);
+
+  const totalFerias = vacationEmployeesInMonth.length;
+  const totalAtestado = atestadoEmployeesInMonth.length;
+  const totalINSS = inssEmployeesInMonth.length;
+  const totalExame = exameEmployeesInMonth.length;
+
+  // Total Ativos (colaboradores sem qualquer afastamento no mês)
+  const totalAtivos = useMemo(() => {
+    const onLeaveIds = new Set([
+      ...vacationEmployeesInMonth.map((v) => v.employee.id),
+      ...atestadoEmployeesInMonth.map((e) => e.id),
+      ...inssEmployeesInMonth.map((e) => e.id),
+      ...exameEmployeesInMonth.map((e) => e.id),
+    ]);
+    return Math.max(0, categoryEmployees.length - onLeaveIds.size);
+  }, [categoryEmployees, vacationEmployeesInMonth, atestadoEmployeesInMonth, inssEmployeesInMonth, exameEmployeesInMonth]);
+
+  // Total de Folga (Média diária de folgas no mês e total acumulado)
+  const { avgDailyFolga, totalFolgasMonth } = useMemo(() => {
+    if (categoryEmployees.length === 0 || dateColumns.length === 0) {
+      return { avgDailyFolga: 0, totalFolgasMonth: 0 };
+    }
+    let totalOffDays = 0;
+    dateColumns.forEach((col) => {
+      distributedTeams.forEach(({ team, members }) => {
+        members.forEach((emp) => {
+          const hasLeave = getDayLeave(emp.id, col.fullDate);
+          if (!hasLeave) {
+            const offs = getEmployeeOffsMap(emp.id, team.id);
+            if (offs[col.dayNumber] === true) {
+              totalOffDays++;
+            }
+          }
+        });
+      });
+    });
+    const avg = Math.round(totalOffDays / dateColumns.length);
+    return { avgDailyFolga: avg, totalFolgasMonth: totalOffDays };
+  }, [categoryEmployees, dateColumns, distributedTeams, currentMonthSchedule, isCurrentMonthGenerated, settings, leaves]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 antialiased p-4 sm:p-8 flex flex-col font-sans">
       <div className="max-w-[1650px] w-full mx-auto space-y-4">
@@ -1337,19 +1468,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               <span>Configuração</span>
             </button>
 
-            {/* Botão Configurar Manual */}
-            <button
-              onClick={() => {
-                generateScheduleForMonth(viewMonth, viewYear, settings, 'manual');
-              }}
-              disabled={categoryEmployees.length === 0}
-              className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-xs transition active:scale-98"
-              title="Limpar a grade e abrir em branco para configurar folgas manualmente clicando nas células"
-            >
-              <Edit3 className="w-4 h-4 text-amber-700" />
-              <span>Configurar Manual</span>
-            </button>
-
             {/* Botão Gerar Folga */}
             <button
               onClick={() => setIsGenerateModalOpen(true)}
@@ -1382,15 +1500,255 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           </div>
         </div>
 
-        {/* Banner de Dica para Configuração Manual */}
-        <div className="flex items-center justify-between bg-blue-50/80 border border-blue-200 rounded-xl px-4 py-2.5 text-xs text-blue-900 shadow-2xs">
-          <div className="flex items-center gap-2">
-            <span className="text-base shrink-0">💡</span>
-            <span>
-              <strong>Configuração Manual Habilitada:</strong> Você pode <strong>clicar diretamente em qualquer célula</strong> da tabela para alternar entre <strong>Trabalho</strong> e <strong>Folga</strong>. No botão <strong>Configuração</strong>, você também pode definir o 1º dia de folga de cada equipe manualmente.
-            </span>
+        {/* Painel de Indicadores / Totais Operacionais */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* 1. Total Ativos */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Total Ativos
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">
+                👥
+              </span>
+            </div>
+            <div>
+              <div className="text-2xl font-black text-slate-900 tracking-tight">
+                {totalAtivos}
+              </div>
+              <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+                operando na escala
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Total de Folga */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Total Folga
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                ☕
+              </span>
+            </div>
+            <div>
+              <div className="text-2xl font-black text-slate-900 tracking-tight flex items-baseline gap-1">
+                {avgDailyFolga}
+                <span className="text-xs font-semibold text-slate-400">/ dia</span>
+              </div>
+              <div className="text-[10px] font-semibold text-blue-600 mt-0.5 truncate" title={`Média diária (${totalFolgasMonth} folgas no mês)`}>
+                média diária ({totalFolgasMonth} no mês)
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Total de Férias */}
+          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+            totalFerias > 0
+              ? 'bg-purple-50/80 border-purple-200 ring-1 ring-purple-300/40 text-purple-950'
+              : 'bg-white border-slate-200/90'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalFerias > 0 ? 'text-purple-900' : 'text-slate-500'}`}>
+                Total Férias
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
+                🏖️
+              </span>
+            </div>
+            <div>
+              <div className={`text-2xl font-black tracking-tight ${totalFerias > 0 ? 'text-purple-950' : 'text-slate-900'}`}>
+                {totalFerias}
+              </div>
+              <div className={`text-[10px] font-bold mt-0.5 ${totalFerias > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
+                {totalFerias > 0 ? `${totalFerias} em descanso` : 'nenhum no mês'}
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Total de Atestado */}
+          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+            totalAtestado > 0
+              ? 'bg-rose-50/80 border-rose-200 ring-1 ring-rose-300/40 text-rose-950'
+              : 'bg-white border-slate-200/90'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalAtestado > 0 ? 'text-rose-900' : 'text-slate-500'}`}>
+                Total Atestado
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">
+                🩺
+              </span>
+            </div>
+            <div>
+              <div className={`text-2xl font-black tracking-tight ${totalAtestado > 0 ? 'text-rose-950' : 'text-slate-900'}`}>
+                {totalAtestado}
+              </div>
+              <div className={`text-[10px] font-bold mt-0.5 ${totalAtestado > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
+                {totalAtestado > 0 ? `${totalAtestado} afastado(s)` : 'nenhum no mês'}
+              </div>
+            </div>
+          </div>
+
+          {/* 5. Total INSS */}
+          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+            totalINSS > 0
+              ? 'bg-amber-50/80 border-amber-200 ring-1 ring-amber-300/40 text-amber-950'
+              : 'bg-white border-slate-200/90'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalINSS > 0 ? 'text-amber-900' : 'text-slate-500'}`}>
+                Total INSS
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold">
+                🏥
+              </span>
+            </div>
+            <div>
+              <div className={`text-2xl font-black tracking-tight ${totalINSS > 0 ? 'text-amber-950' : 'text-slate-900'}`}>
+                {totalINSS}
+              </div>
+              <div className={`text-[10px] font-bold mt-0.5 ${totalINSS > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                {totalINSS > 0 ? `${totalINSS} pelo INSS` : 'nenhum no mês'}
+              </div>
+            </div>
+          </div>
+
+          {/* 6. Total Exame */}
+          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+            totalExame > 0
+              ? 'bg-teal-50/80 border-teal-200 ring-1 ring-teal-300/40 text-teal-950'
+              : 'bg-white border-slate-200/90'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalExame > 0 ? 'text-teal-900' : 'text-slate-500'}`}>
+                Total Exame
+              </span>
+              <span className="w-6 h-6 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center text-xs font-bold">
+                📋
+              </span>
+            </div>
+            <div>
+              <div className={`text-2xl font-black tracking-tight ${totalExame > 0 ? 'text-teal-950' : 'text-slate-900'}`}>
+                {totalExame}
+              </div>
+              <div className={`text-[10px] font-bold mt-0.5 ${totalExame > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
+                {totalExame > 0 ? `${totalExame} em exame` : 'nenhum no mês'}
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Card Destacado Acima da Tabela para Colaboradores em Férias */}
+        {vacationEmployeesInMonth.length > 0 && (
+          <div className="bg-gradient-to-r from-purple-50/90 via-purple-50/60 to-indigo-50/40 border border-purple-200/90 rounded-2xl p-4 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-purple-200/60 flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center text-base shadow-xs shrink-0">
+                  🏖️
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-xs sm:text-sm text-purple-950">
+                      Colaboradores em Férias no Mês ({MONTH_NAMES[viewMonth]}/{viewYear})
+                    </h3>
+                    <span className="bg-purple-200/90 text-purple-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-purple-300">
+                      {totalFerias} {totalFerias === 1 ? 'colaborador' : 'colaboradores'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-700/90 mt-0.5">
+                    Durante o período de férias regulamentares, a rotação normal é suspensa e a escala continua estável para o restante da equipe.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Grid dos Colaboradores em Férias */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-3">
+              {vacationEmployeesInMonth.map(({ employee, leave, team }) => {
+                const [, sMonth, sDay] = leave.startDate.split('-');
+                const [, eMonth, eDay] = leave.endDate.split('-');
+                const startStr = `${sDay}/${sMonth}`;
+                const endStr = `${eDay}/${eMonth}`;
+
+                const startD = new Date(leave.startDate);
+                const endD = new Date(leave.endDate);
+                const diffDays = Math.max(
+                  1,
+                  Math.round((endD.getTime() - startD.getTime()) / (1000 * 60 * 60 * 24)) + 1
+                );
+
+                return (
+                  <div
+                    key={leave.id}
+                    className="bg-white/95 rounded-xl border border-purple-200/80 p-3 shadow-2xs hover:shadow-xs hover:border-purple-300 transition flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${team.avatarBg}`}
+                      >
+                        {employee.name
+                          .split(' ')
+                          .slice(0, 2)
+                          .map((n) => n[0])
+                          .join('')}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {employee.name}
+                          </span>
+                          <span className="text-[9px] font-mono text-slate-400">
+                            ({employee.registration})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: team.dotColor }}
+                            />
+                            {team.name}
+                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100/70 px-1.5 py-0.5 rounded border border-purple-200">
+                            {startStr} até {endStr} ({diffDays} dias)
+                          </span>
+                        </div>
+                        {leave.observation && (
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5 italic">
+                            {leave.observation}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Ações Rápidas */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenLeaveModal(employee, 'FERIAS')}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-100/60 transition"
+                        title="Editar período de férias"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLeave(leave.id)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                        title="Remover férias"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Se NÃO houver colaboradores na categoria */}
         {categoryEmployees.length === 0 ? (
@@ -1615,10 +1973,20 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                         className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 border ${
                                           activeLeave.type === 'FERIAS'
                                             ? 'bg-purple-100 text-purple-800 border-purple-300'
-                                            : 'bg-rose-100 text-rose-800 border-rose-300'
+                                            : activeLeave.type === 'ATESTADO'
+                                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                            : activeLeave.type === 'INSS'
+                                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                            : 'bg-teal-100 text-teal-800 border-teal-300'
                                         }`}
                                       >
-                                        {activeLeave.type === 'FERIAS' ? '🏖️ Férias' : '🩺 Atestado'}
+                                        {activeLeave.type === 'FERIAS'
+                                          ? '🏖️ Férias'
+                                          : activeLeave.type === 'ATESTADO'
+                                          ? '🩺 Atestado'
+                                          : activeLeave.type === 'INSS'
+                                          ? '🏥 INSS'
+                                          : '📋 Exame'}
                                       </span>
                                     )}
                                   </div>
@@ -1634,7 +2002,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                             </div>
                           </td>
 
-                          {/* Células de Datas (com suporte a Férias e Atestado) */}
+                          {/* Células de Datas (com suporte a Férias, Atestado, INSS e Exame) */}
                           {dateColumns.map((col) => {
                             const dayLeave = getDayLeave(emp.id, col.fullDate);
                             const isOff = empOffs[col.dayNumber] === true;
@@ -1648,22 +2016,36 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                   dayLeave
                                     ? dayLeave.type === 'FERIAS'
                                       ? 'Férias'
-                                      : 'Atestado Médico'
+                                      : dayLeave.type === 'ATESTADO'
+                                      ? 'Atestado Médico'
+                                      : dayLeave.type === 'INSS'
+                                      ? 'Afastamento INSS'
+                                      : 'Exame Periódico'
                                     : isOff
                                     ? 'Folga'
                                     : 'Trabalho'
                                 }`}
                               >
                                 {dayLeave ? (
-                                  /* Afastamento: Férias ou Atestado */
+                                  /* Afastamento: Férias, Atestado, INSS ou Exame */
                                   <div
                                     className={`w-full h-7 rounded-md font-extrabold text-[10px] flex items-center justify-center shadow-2xs border ${
                                       dayLeave.type === 'FERIAS'
                                         ? 'bg-purple-100 text-purple-900 border-purple-300 hover:bg-purple-200'
-                                        : 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                                        : dayLeave.type === 'ATESTADO'
+                                        ? 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                                        : dayLeave.type === 'INSS'
+                                        ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                        : 'bg-teal-100 text-teal-900 border-teal-300 hover:bg-teal-200'
                                     }`}
                                   >
-                                    {dayLeave.type === 'FERIAS' ? 'Férias' : 'Atestado'}
+                                    {dayLeave.type === 'FERIAS'
+                                      ? 'Férias'
+                                      : dayLeave.type === 'ATESTADO'
+                                      ? 'Atestado'
+                                      : dayLeave.type === 'INSS'
+                                      ? 'INSS'
+                                      : 'Exame'}
                                   </div>
                                 ) : isOff ? (
                                   /* Folga: Card branco nítido com borda suave */
@@ -1792,9 +2174,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'FERIAS')}
-                  className="w-full px-3 py-2.5 text-left hover:bg-purple-50 text-slate-800 hover:text-purple-700 rounded-xl flex items-center gap-3 transition group"
+                  className="w-full px-3 py-2 text-left hover:bg-purple-50 text-slate-800 hover:text-purple-700 rounded-xl flex items-center gap-2.5 transition group"
                 >
-                  <span className="text-xl p-1.5 bg-purple-100 text-purple-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                  <span className="text-lg p-1 bg-purple-100 text-purple-700 rounded-lg group-hover:scale-105 transition shrink-0">
                     🏖️
                   </span>
                   <div>
@@ -1810,9 +2192,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'ATESTADO')}
-                  className="w-full px-3 py-2.5 text-left hover:bg-rose-50 text-slate-800 hover:text-rose-700 rounded-xl flex items-center gap-3 transition group"
+                  className="w-full px-3 py-2 text-left hover:bg-rose-50 text-slate-800 hover:text-rose-700 rounded-xl flex items-center gap-2.5 transition group"
                 >
-                  <span className="text-xl p-1.5 bg-rose-100 text-rose-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                  <span className="text-lg p-1 bg-rose-100 text-rose-700 rounded-lg group-hover:scale-105 transition shrink-0">
                     🩺
                   </span>
                   <div>
@@ -1821,6 +2203,42 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                     </div>
                     <div className="text-[10px] text-slate-400 font-normal">
                       Licença médica / saúde
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'INSS')}
+                  className="w-full px-3 py-2 text-left hover:bg-amber-50 text-slate-800 hover:text-amber-700 rounded-xl flex items-center gap-2.5 transition group"
+                >
+                  <span className="text-lg p-1 bg-amber-100 text-amber-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                    🏥
+                  </span>
+                  <div>
+                    <div className="font-bold text-xs text-slate-900 group-hover:text-amber-700">
+                      Adicionar INSS
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-normal">
+                      Afastamento previdenciário
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'EXAME')}
+                  className="w-full px-3 py-2 text-left hover:bg-teal-50 text-slate-800 hover:text-teal-700 rounded-xl flex items-center gap-2.5 transition group"
+                >
+                  <span className="text-lg p-1 bg-teal-100 text-teal-700 rounded-lg group-hover:scale-105 transition shrink-0">
+                    📋
+                  </span>
+                  <div>
+                    <div className="font-bold text-xs text-slate-900 group-hover:text-teal-700">
+                      Adicionar Exame
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-normal">
+                      Exame periódico / retorno
                     </div>
                   </div>
                 </button>

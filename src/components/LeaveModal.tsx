@@ -54,11 +54,21 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
           setStartDate(formatDefaultDate(1));
           setEndDate(formatDefaultDate(15));
           setObservation('Férias regulamentares');
-        } else {
+        } else if (initialType === 'ATESTADO') {
           // Padrão 3 dias de atestado
           setStartDate(formatDefaultDate(5));
           setEndDate(formatDefaultDate(7));
           setObservation('Atestado médico');
+        } else if (initialType === 'INSS') {
+          // Padrão 30 dias de INSS
+          setStartDate(formatDefaultDate(1));
+          setEndDate(formatDefaultDate(30));
+          setObservation('Afastamento previdenciário INSS');
+        } else if (initialType === 'EXAME') {
+          // Padrão 1 dia de exame
+          setStartDate(formatDefaultDate(5));
+          setEndDate(formatDefaultDate(5));
+          setObservation('Exame médico periódico');
         }
       }
     }
@@ -106,7 +116,7 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div>
             <h3 className="font-bold text-slate-900 text-sm">
-              {existingLeave ? 'Editar Afastamento' : 'Registrar Férias / Atestado'}
+              {existingLeave ? 'Editar Afastamento' : 'Registrar Afastamento / Férias'}
             </h3>
             <p className="text-xs text-slate-500">
               {employee.name} • Matrícula: {employee.registration} • {teamName}
@@ -122,42 +132,86 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* 1. Escolha do Tipo: Férias ou Atestado */}
+          {/* 1. Escolha do Tipo: Férias, Atestado, INSS ou Exame */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
               Tipo de Afastamento
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button
                 type="button"
-                onClick={() => setType('FERIAS')}
-                className={`p-3.5 rounded-xl border text-left transition flex items-center gap-3 ${
+                onClick={() => {
+                  setType('FERIAS');
+                  setObservation('Férias regulamentares');
+                }}
+                className={`p-3 rounded-xl border text-left transition flex flex-col gap-1.5 ${
                   type === 'FERIAS'
-                    ? 'border-purple-600 bg-purple-50/70 ring-2 ring-purple-500/20'
+                    ? 'border-purple-600 bg-purple-50/80 ring-2 ring-purple-500/20'
                     : 'border-slate-200 hover:border-slate-300 bg-white'
                 }`}
               >
-                <span className="text-2xl">🏖️</span>
-                <div>
-                  <span className="font-bold text-xs text-slate-900 block">Férias</span>
-                  <span className="text-[10px] text-slate-500">Período de descanso</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🏖️</span>
+                  <span className="font-bold text-xs text-slate-900">Férias</span>
                 </div>
+                <span className="text-[10px] text-slate-500">Descanso regulamentar</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setType('ATESTADO')}
-                className={`p-3.5 rounded-xl border text-left transition flex items-center gap-3 ${
+                onClick={() => {
+                  setType('ATESTADO');
+                  setObservation('Atestado médico');
+                }}
+                className={`p-3 rounded-xl border text-left transition flex flex-col gap-1.5 ${
                   type === 'ATESTADO'
-                    ? 'border-rose-600 bg-rose-50/70 ring-2 ring-rose-500/20'
+                    ? 'border-rose-600 bg-rose-50/80 ring-2 ring-rose-500/20'
                     : 'border-slate-200 hover:border-slate-300 bg-white'
                 }`}
               >
-                <span className="text-2xl">🩺</span>
-                <div>
-                  <span className="font-bold text-xs text-slate-900 block">Atestado Médico</span>
-                  <span className="text-[10px] text-slate-500">Licença de saúde</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🩺</span>
+                  <span className="font-bold text-xs text-slate-900">Atestado</span>
                 </div>
+                <span className="text-[10px] text-slate-500">Licença médica</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setType('INSS');
+                  setObservation('Afastamento previdenciário INSS');
+                }}
+                className={`p-3 rounded-xl border text-left transition flex flex-col gap-1.5 ${
+                  type === 'INSS'
+                    ? 'border-amber-600 bg-amber-50/80 ring-2 ring-amber-500/20'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🏥</span>
+                  <span className="font-bold text-xs text-slate-900">INSS</span>
+                </div>
+                <span className="text-[10px] text-slate-500">Previdência social</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setType('EXAME');
+                  setObservation('Exame médico periódico');
+                }}
+                className={`p-3 rounded-xl border text-left transition flex flex-col gap-1.5 ${
+                  type === 'EXAME'
+                    ? 'border-teal-600 bg-teal-50/80 ring-2 ring-teal-500/20'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">📋</span>
+                  <span className="font-bold text-xs text-slate-900">Exame</span>
+                </div>
+                <span className="text-[10px] text-slate-500">Periódico / Clínico</span>
               </button>
             </div>
           </div>
@@ -174,7 +228,11 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
                   className={`text-xs font-bold px-2 py-0.5 rounded-md border ${
                     type === 'FERIAS'
                       ? 'bg-purple-50 text-purple-700 border-purple-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                      : type === 'ATESTADO'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : type === 'INSS'
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-teal-50 text-teal-700 border-teal-200'
                   }`}
                 >
                   Duração: {daysCount} {daysCount === 1 ? 'dia' : 'dias'}
@@ -220,7 +278,15 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder={type === 'FERIAS' ? 'Ex: Férias regulares 2026' : 'Ex: Atestado médico / CID'}
+              placeholder={
+                type === 'FERIAS'
+                  ? 'Ex: Férias regulares 2026'
+                  : type === 'ATESTADO'
+                  ? 'Ex: Atestado médico / CID'
+                  : type === 'INSS'
+                  ? 'Ex: Afastamento previdenciário INSS'
+                  : 'Ex: Exame médico periódico / retorno ao trabalho'
+              }
               value={observation}
               onChange={(e) => setObservation(e.target.value)}
               className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
@@ -255,7 +321,11 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
                 className={`inline-flex items-center gap-1.5 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition active:scale-98 ${
                   type === 'FERIAS'
                     ? 'bg-purple-600 hover:bg-purple-700'
-                    : 'bg-rose-600 hover:bg-rose-700'
+                    : type === 'ATESTADO'
+                    ? 'bg-rose-600 hover:bg-rose-700'
+                    : type === 'INSS'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-teal-600 hover:bg-teal-700'
                 }`}
               >
                 <CheckCircle2 className="w-4 h-4" />

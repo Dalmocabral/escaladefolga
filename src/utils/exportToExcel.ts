@@ -178,12 +178,24 @@ export async function exportScheduleToExcel(params: {
           col.fullDate <= empActiveLeave.endDate;
 
         if (isLeave) {
-          const leaveLabel = empActiveLeave.type === 'FERIAS' ? 'Férias' : 'Atestado';
+          let leaveLabel = 'Férias';
+          let fgColor = 'FFE1D5E7'; // Lilás / Purple
+          if (empActiveLeave.type === 'ATESTADO') {
+            leaveLabel = 'Atestado';
+            fgColor = 'FFF8CECC'; // Rose / Vermelho claro
+          } else if (empActiveLeave.type === 'INSS') {
+            leaveLabel = 'INSS';
+            fgColor = 'FFFFE599'; // Amarelo/Laranja claro
+          } else if (empActiveLeave.type === 'EXAME') {
+            leaveLabel = 'Exame';
+            fgColor = 'FFB2EBF2'; // Ciano/Teal claro
+          }
+
           dayCell.value = leaveLabel;
           dayCell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: empActiveLeave.type === 'FERIAS' ? 'FFE1D5E7' : 'FFF8CECC' },
+            fgColor: { argb: fgColor },
           };
           dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF000000' } };
         } else {
