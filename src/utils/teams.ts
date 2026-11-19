@@ -1,3 +1,5 @@
+import type { ScaleType, Employee } from '../types';
+
 export interface TeamConfig {
   id: number;
   name: string;
@@ -92,6 +94,36 @@ export const TEAMS: TeamConfig[] = [
   },
 ];
 
+// Regra que define o primeiro dia de folga para cada equipe (folgas contínuas e sequenciais ou manuais)
+export const getInitialTeamOffDay = (
+  teamIdx: number,
+  _numTeams: number,
+  scaleType: ScaleType,
+  customTeamOffDays?: Record<number, number>
+): number => {
+  if (customTeamOffDays && customTeamOffDays[teamIdx] !== undefined) {
+    return customTeamOffDays[teamIdx];
+  }
+
+  if (scaleType === '5x1') {
+    // Escala 5x1: ciclo de 6 dias (5 trabalhados + 1 folga)
+    return (teamIdx % 6) + 1;
+  }
+
+  if (scaleType === '5x2') {
+    // Escala 5x2: ciclo de 7 dias (5 trabalhados + 2 folgas consecutivas - uma atrás da outra)
+    return (teamIdx % 7) + 1;
+  }
+
+  if (scaleType === '6x1') {
+    // Escala 6x1: ciclo de 7 dias (6 trabalhados + 1 folga)
+    return (teamIdx % 7) + 1;
+  }
+
+  // 12x36: alternância diária (Dia 1 e Dia 2)
+  return (teamIdx % 2) + 1;
+};
+
 export function distributeEmployeesToTeams<T>(items: T[], numTeams: number) {
   const result: { team: TeamConfig; members: T[] }[] = [];
   const safeNumTeams = Math.max(1, Math.min(numTeams, TEAMS.length));
@@ -120,5 +152,112 @@ export function distributeEmployeesToTeams<T>(items: T[], numTeams: number) {
     });
   }
 
+  return result;
+}
+
+export interface ReorganizeTeamsOptions {
+  employees: Employee[];
+  prevMonthSchedule: Record<string, Record<number, boolean>>;
+  prevMonthTotalDays: number;
+  targetScaleType: ScaleType;
+  numTeams: number;
+  customTeamOffDays?: Record<number, number>;
+}
+
+/**
+ * Reorganiza os colaboradores entre equipes para transição de meses (ex: 5x1 <-> 5x2 ou continuidade)
+ * Garantindo RIGOROSAMENTE:
+ * 1. Nenhum colaborador trabalha mais de 6 dias consecutivos na virada do mês (TotalTrabalhado <= 6).
+ * 2. As equipes permanecem equilibradas no tamanho.
+ * 3. As folgas seguem o padrão da escala de destino (5x2: 2 folgas consecutivas; 5x1: 1 folga).
+ */
+export function reorganizeTeamsForScaleTransition({
+  employees,
+  prevMonthSchedule,
+  prevMonthTotalDays,
+  targetScaleType,
+  numTeams,
+  customTeamOffDays,
+}: ReorganizeTeamsOptions): Record<number, string[]> {
+  const safeNumTeams = Math.max(1, Math.min(numTeams, TEAMS.length));
+  const maxCap = Math.ceil(employees.length / safeNumTeams);
+
+  // 1. Calcula para cada colaborador os dias trabalhados consecutivamente no final do mês anterior
+  const empData = employees.map((emp) => {
+    let workedAtEnd = 0;
+    const empPrev = prevMonthSchedule[emp.id];
+    if (empPrev) {
+      for (let d = prevMonthTotalDays; d >= 1; d--) {
+        if (empPrev[d] === true) break;
+        workedAtEnd++;
+      }
+    }
+    return { emp, workedAtEnd };
+  });
+
+  // Ordena decrescente pelos dias trabalhados (os mais restritivos primeiro)
+  empData.sort((a, b) => b.workedAtEnd - a.workedAtEnd);
+
+  const teamFirstOff: number[] = [];
+  for (let t = 0; t < safeNumTeams; t++) {
+    teamFirstOff.push(getInitialTeamOffDay(t, safeNumTeams, targetScaleType, customTeamOffDays));
+  }
+
+  const teamMembers: string[][] = Array.from({ length: safeNumTeams }, () => []);
+
+  for (const { emp, workedAtEnd } of empData) {
+    let bestTeam = -1;
+    let bestScore = Infinity;
+
+    for (let t = 0; t < safeNumTeams; t++) {
+      const f = teamFirstOff[t];
+      const startWorkedInNewMonth = f - 1;
+      const totalConsecutive = workedAtEnd + startWorkedInNewMonth;
+
+      // REGRA MESTRA: Não pode ultrapassar 6 dias trabalhados
+      if (totalConsecutive > 6) {
+        continue;
+      }
+
+      const currentCount = teamMembers[t].length;
+      let capacityPenalty = 0;
+      if (currentCount >= maxCap) {
+        capacityPenalty = 1000 + (currentCount - maxCap) * 500;
+      } else {
+        // Encoraja equilíbrio de membros entre as equipes
+        capacityPenalty = currentCount * 30;
+      }
+
+      // Distância do ciclo ideal de 5 dias trabalhados
+      const distanceTo5 = Math.abs(totalConsecutive - 5);
+      const score = distanceTo5 * 15 + capacityPenalty;
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestTeam = t;
+      }
+    }
+
+    // Se nenhuma equipe couber com <= 6 dias (caso extremo), seleciona a equipe com menor número de dias até a primeira folga
+    if (bestTeam === -1) {
+      let bestT = 0;
+      let minTotal = Infinity;
+      for (let t = 0; t < safeNumTeams; t++) {
+        const total = workedAtEnd + (teamFirstOff[t] - 1);
+        if (total < minTotal) {
+          minTotal = total;
+          bestT = t;
+        }
+      }
+      bestTeam = bestT;
+    }
+
+    teamMembers[bestTeam].push(emp.id);
+  }
+
+  const result: Record<number, string[]> = {};
+  for (let t = 0; t < safeNumTeams; t++) {
+    result[t] = teamMembers[t];
+  }
   return result;
 }

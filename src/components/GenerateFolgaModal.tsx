@@ -52,6 +52,7 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
 }) => {
   const [targetMonth, setTargetMonth] = useState(currentViewMonth);
   const [targetYear, setTargetYear] = useState(currentViewYear);
+  const [targetScaleType, setTargetScaleType] = useState<ScaleType>(scaleType);
   const [mode, setMode] = useState<GenerationMode>('continuidade');
   const [compensatorySunday, setCompensatorySunday] = useState<CompensatorySundayMode>('auto');
   const compensatoryStrategy: CompensatoryStrategy = 'swap';
@@ -61,8 +62,9 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
     if (isOpen) {
       setTargetMonth(currentViewMonth);
       setTargetYear(currentViewYear);
+      setTargetScaleType(scaleType);
     }
-  }, [isOpen, currentViewMonth, currentViewYear]);
+  }, [isOpen, currentViewMonth, currentViewYear, scaleType]);
 
   // Calcula dinamicamente se o mês imediatamente anterior ao targetMonth possui escala salva
   const prevMonthIndex = targetMonth === 0 ? 11 : targetMonth - 1;
@@ -91,6 +93,7 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
       targetMonth,
       targetYear,
       mode,
+      targetScaleType,
       compensatorySunday,
       compensatoryStrategy,
     });
@@ -163,7 +166,61 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
             </div>
           </div>
 
-          {/* 2. Escolha do Modo: Nova ou Continuidade */}
+          {/* 2. Escolha da Escala para o Mês de Destino */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+              Regime de Escala para {selectedMonthName} / {targetYear}
+            </label>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setTargetScaleType('5x2')}
+                className={`p-3 rounded-xl border text-left transition flex items-center justify-between ${
+                  targetScaleType === '5x2'
+                    ? 'border-blue-600 bg-blue-50/80 ring-2 ring-blue-500/20'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <div>
+                  <div className="font-bold text-xs text-slate-900">Escala 5x2</div>
+                  <div className="text-[10px] text-slate-500">5 dias de trabalho x 2 folgas consecutivas</div>
+                </div>
+                {targetScaleType === '5x2' && <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTargetScaleType('5x1')}
+                className={`p-3 rounded-xl border text-left transition flex items-center justify-between ${
+                  targetScaleType === '5x1'
+                    ? 'border-blue-600 bg-blue-50/80 ring-2 ring-blue-500/20'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <div>
+                  <div className="font-bold text-xs text-slate-900">Escala 5x1</div>
+                  <div className="text-[10px] text-slate-500">5 dias de trabalho x 1 folga</div>
+                </div>
+                {targetScaleType === '5x1' && <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />}
+              </button>
+            </div>
+
+            {hasPreviousMonthData && mode === 'continuidade' && (
+              <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs text-indigo-950 flex items-start gap-2.5">
+                <span className="text-base shrink-0">🛡️</span>
+                <div>
+                  <div className="font-bold text-xs">
+                    Reorganização Automática de Equipes (Regra dos 6 Dias)
+                  </div>
+                  <div className="text-[11px] text-indigo-800 mt-0.5 leading-relaxed">
+                    O sistema analisará os dias trabalhados no final de {previousMonthLabel} e reorganizará os colaboradores entre as equipes para <strong>garantir que nenhum colaborador ultrapasse 6 dias consecutivos trabalhados</strong> na transição {scaleType !== targetScaleType ? `(${scaleType} ➔ ${targetScaleType})` : ''}.
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 3. Escolha do Modo: Nova ou Continuidade */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2.5">
               Como deseja calcular as folgas?

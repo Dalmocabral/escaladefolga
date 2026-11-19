@@ -10,7 +10,13 @@ import type {
   GenerationMode,
   CompensatorySundayMode,
 } from '../types';
-import { distributeEmployeesToTeams, TEAMS, type TeamConfig } from '../utils/teams';
+import {
+  distributeEmployeesToTeams,
+  getInitialTeamOffDay,
+  reorganizeTeamsForScaleTransition,
+  TEAMS,
+  type TeamConfig,
+} from '../utils/teams';
 import { exportScheduleToExcel } from '../utils/exportToExcel';
 import { RoleScheduleConfigModal } from './RoleScheduleConfigModal';
 import { GenerateFolgaModal } from './GenerateFolgaModal';
@@ -96,35 +102,8 @@ const generateMonthDays = (year: number, month: number): DayColumn[] => {
   return columns;
 };
 
-// Regra que define o primeiro dia de folga para cada equipe (folgas contínuas e sequenciais ou manuais)
-export const getInitialTeamOffDay = (
-  teamIdx: number,
-  _numTeams: number,
-  scaleType: ScaleType,
-  customTeamOffDays?: Record<number, number>
-): number => {
-  if (customTeamOffDays && customTeamOffDays[teamIdx] !== undefined) {
-    return customTeamOffDays[teamIdx];
-  }
-
-  if (scaleType === '5x1') {
-    // Escala 5x1: ciclo de 6 dias (5 trabalhados + 1 folga)
-    return (teamIdx % 6) + 1;
-  }
-
-  if (scaleType === '5x2') {
-    // Escala 5x2: ciclo de 7 dias (5 trabalhados + 2 folgas consecutivas - uma atrás da outra)
-    return (teamIdx % 7) + 1;
-  }
-
-  if (scaleType === '6x1') {
-    // Escala 6x1: ciclo de 7 dias (6 trabalhados + 1 folga)
-    return (teamIdx % 7) + 1;
-  }
-
-  // 12x36: alternância diária (Dia 1 e Dia 2)
-  return (teamIdx % 2) + 1;
-};
+// Re-exporta a regra que define o primeiro dia de folga por equipe
+export { getInitialTeamOffDay };
 
 // Gera folgas iniciais para Novembro/2026 para a categoria atual
 const buildInitialNovemberSchedule = (
@@ -211,8 +190,53 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   const storageKeySettings = `escala_db_settings_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
   const storageKeyLeaves = `escala_db_leaves_v5_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
   const storageKeyTeamAssignments = `escala_db_team_assignments_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyMonthlyScales = `escala_db_monthly_scales_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyMonthlyTeams = `escala_db_monthly_teams_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // Mês e ano visualizados atualmente (Padrão: Novembro de 2026)
+  const [viewMonth, setViewMonth] = useState<number>(10); // 10 = Novembro
+  const [viewYear, setViewYear] = useState<number>(2026);
+  const currentMonthKey = `${viewYear}-${viewMonth}`;
+
+  // Escalas por mês (5x1, 5x2, etc.)
+  const [monthlyScaleTypes, setMonthlyScaleTypes] = useState<Record<string, ScaleType>>(() => {
+    try {
+      const saved = localStorage.getItem(storageKeyMonthlyScales);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Erro ao ler escalas mensais:', e);
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeyMonthlyScales, JSON.stringify(monthlyScaleTypes));
+    } catch (e) {
+      console.error('Erro ao salvar escalas mensais:', e);
+    }
+  }, [monthlyScaleTypes, storageKeyMonthlyScales]);
+
+  // Equipes por mês
+  const [monthlyTeamAssignments, setMonthlyTeamAssignments] = useState<Record<string, Record<number, string[]>>>(() => {
+    try {
+      const saved = localStorage.getItem(storageKeyMonthlyTeams);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Erro ao ler divisões de equipes mensais:', e);
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKeyMonthlyTeams, JSON.stringify(monthlyTeamAssignments));
+    } catch (e) {
+      console.error('Erro ao salvar divisões de equipes mensais:', e);
+    }
+  }, [monthlyTeamAssignments, storageKeyMonthlyTeams]);
 
   // Colaboradores desta categoria/função no turno atual
   const categoryEmployees = useMemo(() => {
@@ -384,8 +408,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           const y = Number(yStr);
           const m = Number(mStr);
           const daysInM = new Date(y, m + 1, 0).getDate();
+          const mScale = monthlyScaleTypes[mKey] || settings.scaleType;
           const cycleLen =
-            settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
+            mScale === '5x1' ? 6 : mScale === '5x2' ? 7 : mScale === '6x1' ? 7 : 2;
 
           for (const [tIdStr, newEmpIds] of Object.entries(newAssignmentsPerTeam)) {
             const teamId = Number(tIdStr);
@@ -394,7 +419,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               (id) => !newEmpIds.includes(id) && monthSchedule[id]
             );
 
-            let teamFirstOff = getInitialTeamOffDay(teamId, settings.numTeams, settings.scaleType);
+            let teamFirstOff = getInitialTeamOffDay(teamId, settings.numTeams, mScale);
 
             if (existingMemberId && monthSchedule[existingMemberId]) {
               const existingOffs = monthSchedule[existingMemberId];
@@ -410,7 +435,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               if (!monthSchedule[empId]) {
                 const empDays: Record<number, boolean> = {};
                 for (let d = 1; d <= daysInM; d++) {
-                  if (settings.scaleType === '5x2') {
+                  if (mScale === '5x2') {
                     empDays[d] =
                       ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
                       ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
@@ -477,9 +502,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     });
 
     const globallyAssignedEmpIds = new Set<string>();
+    const activeAssignments = monthlyTeamAssignments[currentMonthKey] || teamAssignments;
 
     const result: { team: TeamConfig; members: Employee[] }[] = activeTeams.map((team) => {
-      const memberIds = teamAssignments[team.id] || [];
+      const memberIds = activeAssignments[team.id] || [];
       const members: Employee[] = [];
       memberIds.forEach((id: string) => {
         // Bloqueia se já tiver sido adicionado a qualquer equipe
@@ -514,7 +540,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
 
     return result;
-  }, [categoryEmployees, settings.numTeams, teamAssignments]);
+  }, [categoryEmployees, settings.numTeams, teamAssignments, monthlyTeamAssignments, currentMonthKey]);
 
   // Mapeamento rápido de colaborador -> equipe
   const employeeTeamMap = useMemo(() => {
@@ -525,9 +551,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     return map;
   }, [distributedTeams]);
 
-  // 3. Currently viewed month and year (Padrão: Novembro de 2026)
-  const [viewMonth, setViewMonth] = useState<number>(10); // 10 = Novembro
-  const [viewYear, setViewYear] = useState<number>(2026);
+  // Regime de escala efetivo do mês visualizado
+  const currentViewScaleType: ScaleType = monthlyScaleTypes[currentMonthKey] || settings.scaleType;
 
   // 4. Modals state
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -692,7 +717,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const currentMonthKey = `${viewYear}-${viewMonth}`;
   const currentMonthSchedule = monthlySchedules[currentMonthKey] || {};
   const isCurrentMonthGenerated = Object.keys(currentMonthSchedule).length > 0;
 
@@ -852,9 +876,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
 
     // Monta o novo mapeamento de equipes garantindo isolamento total entre equipes
+    const currentAssignments = monthlyTeamAssignments[currentMonthKey] || teamAssignments;
     const nextAssignments: Record<number, string[]> = {};
     for (let i = 0; i < settings.numTeams; i++) {
-      nextAssignments[i] = [...(teamAssignments[i] || [])];
+      nextAssignments[i] = [...(currentAssignments[i] || [])];
     }
 
     // 1. Remove de QUALQUER equipe onde possa estar (garantindo que fique em apenas 1 equipe e sem duplicatas)
@@ -879,6 +904,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
 
     setTeamAssignments(nextAssignments);
+    setMonthlyTeamAssignments((prev) => ({
+      ...prev,
+      [currentMonthKey]: nextAssignments,
+    }));
 
     // 3. Se mudou de equipe, reajusta as folgas automaticamente nos meses existentes
     if (sourceTeamId !== targetTeamId) {
@@ -889,18 +918,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
         Object.keys(next).forEach((monthKey) => {
           const monthSchedule = { ...next[monthKey] };
+          const mScale = monthlyScaleTypes[monthKey] || settings.scaleType;
 
           // Padrão de dias de folga da equipe de destino (sincronizado e puro)
           const firstOff = getInitialTeamOffDay(
             targetTeamId,
             settings.numTeams,
-            settings.scaleType
+            mScale
           );
           const cycleLen =
-            settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
+            mScale === '5x1' ? 6 : mScale === '5x2' ? 7 : mScale === '6x1' ? 7 : 2;
           const destPattern: Record<number, boolean> = {};
           for (let d = 1; d <= 31; d++) {
-            if (settings.scaleType === '5x2') {
+            if (mScale === '5x2') {
               destPattern[d] =
                 ((d - firstOff) % 7 + 7) % 7 === 0 ||
                 ((d - (firstOff + 1)) % 7 + 7) % 7 === 0;
@@ -1001,17 +1031,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     );
   };
 
-  // Gerador de Escala Mensal (com suporte a Continuidade, Equipes Customizadas, Modo Manual e Folga Compensatória Dominical)
+  // Gerador de Escala Mensal (com suporte a Continuidade, Transição 5x1 <-> 5x2, Reorganização de Equipes e Regra de Máximo 6 Dias Trabalhados)
   const generateScheduleForMonth = (
     targetMonth: number,
     targetYear: number,
     cfg: CategoryScheduleSettings,
     mode: GenerationMode,
     compensatorySunday: CompensatorySundayMode = 'auto',
-    explicitTeams?: { team: TeamConfig; members: Employee[] }[]
+    explicitTeams?: { team: TeamConfig; members: Employee[] }[],
+    targetScaleType?: ScaleType
   ) => {
     const targetKey = `${targetYear}-${targetMonth}`;
     const daysInTarget = new Date(targetYear, targetMonth + 1, 0).getDate();
+    const effectiveScaleType = targetScaleType || cfg.scaleType;
 
     // Se o modo for manual, limpa as folgas e deixa todos em trabalho para o usuário definir manualmente
     if (mode === 'manual') {
@@ -1026,6 +1058,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           blankMonthData[emp.id] = empDays;
         });
       });
+      setMonthlyScaleTypes((prev) => ({
+        ...prev,
+        [targetKey]: effectiveScaleType,
+      }));
       setMonthlySchedules((prev) => ({
         ...prev,
         [targetKey]: blankMonthData,
@@ -1046,68 +1082,88 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     const prevMonthData = monthlySchedules[pKey];
     const prevMonthTotalDays = new Date(pYear, pMonth + 1, 0).getDate();
 
-    // USA AS EQUIPES COM A QUANTIDADE ATUAL (OU EXPLICITAMENTE PASSADAS)
-    const teams = explicitTeams ?? distributedTeams;
-    const newMonthData: Record<string, Record<number, boolean>> = {};
-    const cycleLen = cfg.scaleType === '5x1' ? 6 : cfg.scaleType === '5x2' ? 7 : cfg.scaleType === '6x1' ? 7 : 2;
+    // Mapeia colaboradores únicos para garantir ausência de duplicatas
+    const uniqueCategoryEmployees: Employee[] = [];
+    const empById = new Map<string, Employee>();
+    const seenRegistrations = new Set<string>();
+    const seenNames = new Set<string>();
+    categoryEmployees.forEach((emp) => {
+      const regKey = emp.registration?.trim().toUpperCase();
+      const nameKey = emp.name?.trim().toLowerCase();
+      if (regKey && seenRegistrations.has(regKey)) return;
+      if (nameKey && seenNames.has(nameKey)) return;
+      if (regKey) seenRegistrations.add(regKey);
+      if (nameKey) seenNames.add(nameKey);
+      empById.set(emp.id, emp);
+      uniqueCategoryEmployees.push(emp);
+    });
 
-    teams.forEach(({ team, members }) => {
+    let activeTeamsForGeneration: { team: TeamConfig; members: Employee[] }[] = [];
+
+    // Se for continuidade e houver histórico do mês anterior:
+    // Reorganiza automaticamente os colaboradores entre as equipes para NUNCA passar de 6 dias trabalhados
+    if (mode === 'continuidade' && prevMonthData) {
+      const reorganizedMap = reorganizeTeamsForScaleTransition({
+        employees: uniqueCategoryEmployees,
+        prevMonthSchedule: prevMonthData,
+        prevMonthTotalDays,
+        targetScaleType: effectiveScaleType,
+        numTeams: cfg.numTeams,
+        customTeamOffDays: cfg.customTeamOffDays,
+      });
+
+      // Salva alocação de equipes no mês de destino e atualiza o estado de equipes
+      setMonthlyTeamAssignments((prev) => ({
+        ...prev,
+        [targetKey]: reorganizedMap,
+      }));
+      setTeamAssignments(reorganizedMap);
+
+      const safeNumTeams = Math.max(1, Math.min(cfg.numTeams, TEAMS.length));
+      activeTeamsForGeneration = TEAMS.slice(0, safeNumTeams).map((team) => {
+        const ids = reorganizedMap[team.id] || [];
+        const members: Employee[] = [];
+        ids.forEach((id) => {
+          const emp = empById.get(id);
+          if (emp) members.push(emp);
+        });
+        return { team, members };
+      });
+    } else {
+      activeTeamsForGeneration = explicitTeams ?? distributedTeams;
+    }
+
+    // Registra a escala utilizada para este mês
+    setMonthlyScaleTypes((prev) => ({
+      ...prev,
+      [targetKey]: effectiveScaleType,
+    }));
+
+    const newMonthData: Record<string, Record<number, boolean>> = {};
+    const cycleLen =
+      effectiveScaleType === '5x1'
+        ? 6
+        : effectiveScaleType === '5x2'
+        ? 7
+        : effectiveScaleType === '6x1'
+        ? 7
+        : 2;
+
+    activeTeamsForGeneration.forEach(({ team, members }) => {
       if (members.length === 0) return;
 
-      // O ciclo de folgas pertence à EQUIPE (respeita dias customizados se configurado manualmente)
-      let teamFirstOffDay = getInitialTeamOffDay(
+      const teamFirstOffDay = getInitialTeamOffDay(
         team.id,
         cfg.numTeams,
-        cfg.scaleType,
+        effectiveScaleType,
         cfg.customTeamOffDays
       );
 
-      if (mode === 'continuidade' && prevMonthData) {
-        // Encontra o histórico dos membros da equipe no mês anterior
-        const membersWithHistory = members.filter((m) => prevMonthData[m.id]);
-        if (membersWithHistory.length > 0) {
-          const workedCounts = membersWithHistory.map((m) => {
-            const empPrevOffs = prevMonthData[m.id] || {};
-            let worked = 0;
-            for (let d = prevMonthTotalDays; d >= 1; d--) {
-              if (empPrevOffs[d] === true) break;
-              worked++;
-            }
-            return worked;
-          });
-
-          // Encontra a contagem de trabalho consecutivo mais comum na equipe
-          const freqMap = new Map<number, number>();
-          workedCounts.forEach((w) => freqMap.set(w, (freqMap.get(w) || 0) + 1));
-          let bestWorked = workedCounts[0];
-          let maxF = 0;
-          freqMap.forEach((f, w) => {
-            if (f > maxF) {
-              maxF = f;
-              bestWorked = w;
-            }
-          });
-
-          if (cfg.scaleType === '5x1') {
-            const workedMod = bestWorked % 6;
-            teamFirstOffDay = workedMod === 5 ? 1 : (6 - workedMod);
-          } else if (cfg.scaleType === '5x2') {
-            const workedMod = bestWorked % 7;
-            teamFirstOffDay = workedMod >= 5 ? 1 : (5 - workedMod + 1);
-          } else if (cfg.scaleType === '6x1') {
-            const workedMod = bestWorked % 7;
-            teamFirstOffDay = workedMod === 6 ? 1 : (7 - workedMod);
-          } else if (cfg.scaleType === '12x36') {
-            teamFirstOffDay = bestWorked > 0 ? 1 : 2;
-          }
-        }
-      }
-
-      // Aplica o primeiro dia de folga da equipe a TODOS os membros da equipe de forma idêntica e sincronizada
       members.forEach((emp) => {
         const empDays: Record<number, boolean> = {};
         for (let d = 1; d <= daysInTarget; d++) {
-          if (cfg.scaleType === '5x2') {
+          if (effectiveScaleType === '5x2') {
+            // Em 5x2: 2 folgas consecutivas (uma atrás da outra)
             empDays[d] =
               ((d - teamFirstOffDay) % 7 + 7) % 7 === 0 ||
               ((d - (teamFirstOffDay + 1)) % 7 + 7) % 7 === 0;
@@ -1119,10 +1175,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       });
     });
 
-    // FOLGA COMPENSATÓRIA DE DOMINGO (1 DOMINGO POR MÊS - LEGISLAÇÃO / CLT)
-    // Se o administrador optou por 'auto', distribui equilibradamente quem ficou com 0 domingos
-    // Exemplo: 5 colaboradores em 4 domingos = 2, 1, 1, 1; em 5 domingos = 1, 1, 1, 1, 1
-    if (compensatorySunday === 'auto' && cfg.scaleType !== '5x2') {
+    // Folga compensatória de domingo (se 5x1 ou 6x1)
+    if (compensatorySunday === 'auto' && effectiveScaleType !== '5x2') {
       const sundays: number[] = [];
       for (let d = 1; d <= daysInTarget; d++) {
         const date = new Date(targetYear, targetMonth, d);
@@ -1134,8 +1188,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       const numSundays = sundays.length;
 
       if (numSundays > 0) {
-        teams.forEach(({ members }) => {
-          // Identifica colaboradores desta equipe com 0 domingos de folga
+        activeTeamsForGeneration.forEach(({ members }) => {
           const zeroSundayEmployees = members.filter((emp) => {
             const empDays = newMonthData[emp.id] || {};
             const sunOffCount = sundays.filter((sDay) => empDays[sDay] === true).length;
@@ -1145,10 +1198,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           const totalZero = zeroSundayEmployees.length;
           if (totalZero === 0) return;
 
-          // Distribui os colaboradores com 0 domingos equilibradamente nos domingos do mês
-          // IMPORTANTE: Concede a folga dominical como folga adicional/compensatória sem remover a folga regular.
-          // Isso impede que qualquer colaborador trabalhe períodos abusivos (> 5 ou 6 dias seguidos)
-          // e mantém todos os membros da equipe sincronizados nas suas folgas padrão da escala.
           zeroSundayEmployees.forEach((emp, index) => {
             const assignedSundayIdx = index % numSundays;
             const targetSunday = sundays[assignedSundayIdx];
@@ -1157,6 +1206,34 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         });
       }
     }
+
+    // REGRA DE OURO (Garantia Absoluta): Nenhum colaborador pode ultrapassar 6 dias consecutivos trabalhados
+    uniqueCategoryEmployees.forEach((emp) => {
+      const empDays = newMonthData[emp.id];
+      if (!empDays) return;
+
+      let workedAtEnd = 0;
+      if (prevMonthData && prevMonthData[emp.id]) {
+        const empPrev = prevMonthData[emp.id];
+        for (let d = prevMonthTotalDays; d >= 1; d--) {
+          if (empPrev[d] === true) break;
+          workedAtEnd++;
+        }
+      }
+
+      let consecutive = workedAtEnd;
+      for (let d = 1; d <= daysInTarget; d++) {
+        if (empDays[d] === true) {
+          consecutive = 0;
+        } else {
+          consecutive++;
+          if (consecutive > 6) {
+            empDays[d] = true;
+            consecutive = 0;
+          }
+        }
+      }
+    });
 
     setMonthlySchedules((prev) => ({
       ...prev,
@@ -1177,7 +1254,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       options.targetYear,
       settings,
       options.mode,
-      options.compensatorySunday ?? 'auto'
+      options.compensatorySunday ?? 'auto',
+      undefined,
+      options.targetScaleType
     );
 
     if (options.mode === 'manual') {
@@ -1187,10 +1266,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       return;
     }
 
-    const modeLabel = options.mode === 'continuidade' ? 'com continuidade do mês anterior' : 'como nova escala';
-    const compLabel = options.compensatorySunday === 'manual' ? ' (Folga compensatória: manual)' : ' (Folga compensatória dominical automática aplicada)';
+    const scaleName = options.targetScaleType || settings.scaleType;
+    const modeLabel =
+      options.mode === 'continuidade'
+        ? `com reorganização de equipes (máx. 6 dias trabalhados)`
+        : 'como nova escala';
     showToast(
-      `✨ Escala gerada ${modeLabel}${compLabel} para ${MONTH_NAMES[options.targetMonth]}/${options.targetYear}!`
+      `✨ Escala ${scaleName} gerada ${modeLabel} para ${MONTH_NAMES[options.targetMonth]}/${options.targetYear}!`
     );
   };
 
@@ -1212,7 +1294,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         distributedTeams: teamsForExport,
         schedule: currentMonthSchedule,
         leaves,
-        scaleType: settings.scaleType,
+        scaleType: currentViewScaleType,
       });
       showToast('📊 Planilha Excel (.xlsx) baixada com sucesso com todas as cores!');
     } catch (err) {
@@ -1242,14 +1324,14 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     const teamFirstOff = getInitialTeamOffDay(
       teamId,
       settings.numTeams,
-      settings.scaleType,
+      currentViewScaleType,
       settings.customTeamOffDays
     );
     const cycleL =
-      settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
+      currentViewScaleType === '5x1' ? 6 : currentViewScaleType === '5x2' ? 7 : currentViewScaleType === '6x1' ? 7 : 2;
     const fallbackDays: Record<number, boolean> = {};
     for (let d = 1; d <= dateColumns.length; d++) {
-      if (settings.scaleType === '5x2') {
+      if (currentViewScaleType === '5x2') {
         fallbackDays[d] =
           ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
           ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
@@ -1478,7 +1560,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                   {roleName}
                 </h1>
                 <span className="text-xs bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-md border border-blue-200">
-                  Escala {settings.scaleType}
+                  Escala {currentViewScaleType}
                 </span>
                 {isCurrentMonthGenerated ? (
                   <span className="text-[11px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
@@ -2029,13 +2111,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                         const teamFirstOff = getInitialTeamOffDay(
                           team.id,
                           settings.numTeams,
-                          settings.scaleType
+                          currentViewScaleType
                         );
                         const cycleLen =
-                          settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
+                          currentViewScaleType === '5x1' ? 6 : currentViewScaleType === '5x2' ? 7 : currentViewScaleType === '6x1' ? 7 : 2;
                         const fallbackDays: Record<number, boolean> = {};
                         for (let d = 1; d <= dateColumns.length; d++) {
-                          if (settings.scaleType === '5x2') {
+                          if (currentViewScaleType === '5x2') {
                             fallbackDays[d] =
                               ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
                               ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
@@ -2270,7 +2352,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               targetTeams = newDist;
             }
 
-            generateScheduleForMonth(viewMonth, viewYear, newSettings, 'nova', 'auto', targetTeams);
+            setMonthlyScaleTypes((prev) => ({
+              ...prev,
+              [currentMonthKey]: newSettings.scaleType,
+            }));
+            generateScheduleForMonth(
+              viewMonth,
+              viewYear,
+              newSettings,
+              'nova',
+              'auto',
+              targetTeams,
+              newSettings.scaleType
+            );
             const modeDesc = newSettings.offDayMode === 'manual' ? ' (Folgas manuais aplicadas por equipe)' : '';
             showToast(
               `Configurações salvas: Escala ${newSettings.scaleType} com ${newSettings.numTeams} equipes${modeDesc}!`
@@ -2284,7 +2378,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           onClose={() => setIsGenerateModalOpen(false)}
           currentViewMonth={viewMonth}
           currentViewYear={viewYear}
-          scaleType={settings.scaleType}
+          scaleType={currentViewScaleType}
           monthlySchedules={monthlySchedules}
           onConfirm={handleConfirmGenerate}
         />

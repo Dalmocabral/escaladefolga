@@ -45,6 +45,7 @@ export interface GenerateFolgaOptions {
   targetMonth: number;
   targetYear: number;
   mode: GenerationMode;
+  targetScaleType?: ScaleType;
   compensatorySunday?: CompensatorySundayMode;
   compensatoryStrategy?: CompensatoryStrategy;
 }
