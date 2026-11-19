@@ -209,7 +209,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   // Chaves do banco de dados local (localStorage) por turno e setor
   const storageKeySchedules = `escala_db_schedules_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
   const storageKeySettings = `escala_db_settings_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeyLeaves = `escala_db_leaves_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyLeaves = `escala_db_leaves_v5_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
   const storageKeyTeamAssignments = `escala_db_team_assignments_v4_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -605,16 +605,16 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             id: 'leave-mot-1',
             employeeId: motEmployees[0].id,
             type: 'FERIAS',
-            startDate: '2026-11-01',
-            endDate: '2026-11-15',
+            startDate: '2026-11-10',
+            endDate: '2026-11-24',
             observation: 'Férias programadas (15 dias)',
           },
           {
             id: 'leave-mot-2',
             employeeId: motEmployees[Math.min(7, motEmployees.length - 1)].id,
             type: 'FERIAS',
-            startDate: '2026-11-05',
-            endDate: '2026-11-19',
+            startDate: '2026-11-10',
+            endDate: '2026-11-24',
             observation: 'Férias programadas (15 dias)',
           },
           {
@@ -1194,17 +1194,22 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     );
   };
 
-  // Exportar Escala para Excel com Formatação Completa de Cores
+  // Exportar Escala para Excel com Formatação Completa de Cores (Apenas Colaboradores Ativos na Escala)
   const handleExportExcel = async () => {
     try {
       setIsExporting(true);
+      const teamsForExport = distributedTeams.map(({ team, members }) => ({
+        team,
+        members: members.filter((emp) => !isEmployeeOnVacation(emp.id)),
+      }));
+
       await exportScheduleToExcel({
         roleName,
         shift,
         month: viewMonth,
         year: viewYear,
         dateColumns,
-        distributedTeams,
+        distributedTeams: teamsForExport,
         schedule: currentMonthSchedule,
         leaves,
         scaleType: settings.scaleType,
@@ -1277,80 +1282,127 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       .filter((item): item is NonNullable<typeof item> => item !== null);
   }, [categoryEmployees, leaves, dateColumns, employeeTeamMap]);
 
-  // Colaboradores da categoria com atestado médico no mês visualizado
-  const atestadoEmployeesInMonth = useMemo(() => {
+  // Verifica se o colaborador tem férias no mês (removendo-o da tabela de escala)
+  const isEmployeeOnVacation = (empId: string): boolean => {
+    return vacationEmployeesInMonth.some((v) => v.employee.id === empId);
+  };
+
+  // Data Atual Real
+  const today = useMemo(() => new Date(), []);
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth(); // 0-indexed (10 para Novembro)
+  const todayDay = today.getDate(); // 19
+
+  // Dia selecionado para exibir os dados (padrão: data atual / hoje)
+  const [selectedDayForMetrics, setSelectedDayForMetrics] = useState<number>(() => {
+    const now = new Date();
+    if (viewYear === now.getFullYear() && viewMonth === now.getMonth()) {
+      return now.getDate();
+    }
+    return 1;
+  });
+
+  // Atualiza selectedDayForMetrics se o mês/ano visualizado mudar
+  useEffect(() => {
+    const now = new Date();
+    if (viewYear === now.getFullYear() && viewMonth === now.getMonth()) {
+      setSelectedDayForMetrics(now.getDate());
+    } else {
+      setSelectedDayForMetrics(1);
+    }
+  }, [viewMonth, viewYear]);
+
+  // Data formatada para a métrica selecionada (YYYY-MM-DD)
+  const selectedDateStr = useMemo(() => {
+    const mm = String(viewMonth + 1).padStart(2, '0');
+    const dd = String(selectedDayForMetrics).padStart(2, '0');
+    return `${viewYear}-${mm}-${dd}`;
+  }, [viewYear, viewMonth, selectedDayForMetrics]);
+
+  const isSelectedDayToday =
+    viewYear === todayYear &&
+    viewMonth === todayMonth &&
+    selectedDayForMetrics === todayDay;
+
+  // 1. Total Férias no Dia Atual
+  const feriasTodayList = useMemo(() => {
+    return categoryEmployees.filter((emp) =>
+      leaves.some(
+        (l) =>
+          l.employeeId === emp.id &&
+          l.type === 'FERIAS' &&
+          selectedDateStr >= l.startDate &&
+          selectedDateStr <= l.endDate
+      )
+    );
+  }, [categoryEmployees, leaves, selectedDateStr]);
+  const totalFeriasHoje = feriasTodayList.length;
+
+  // 2. Total Atestado no Dia Atual
+  const atestadoTodayList = useMemo(() => {
     return categoryEmployees.filter((emp) =>
       leaves.some(
         (l) =>
           l.employeeId === emp.id &&
           l.type === 'ATESTADO' &&
-          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+          selectedDateStr >= l.startDate &&
+          selectedDateStr <= l.endDate
       )
     );
-  }, [categoryEmployees, leaves, dateColumns]);
+  }, [categoryEmployees, leaves, selectedDateStr]);
+  const totalAtestadoHoje = atestadoTodayList.length;
 
-  // Colaboradores da categoria com INSS no mês visualizado
-  const inssEmployeesInMonth = useMemo(() => {
+  // 3. Total INSS no Dia Atual
+  const inssTodayList = useMemo(() => {
     return categoryEmployees.filter((emp) =>
       leaves.some(
         (l) =>
           l.employeeId === emp.id &&
           l.type === 'INSS' &&
-          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+          selectedDateStr >= l.startDate &&
+          selectedDateStr <= l.endDate
       )
     );
-  }, [categoryEmployees, leaves, dateColumns]);
+  }, [categoryEmployees, leaves, selectedDateStr]);
+  const totalINSSHoje = inssTodayList.length;
 
-  // Colaboradores da categoria com Exame no mês visualizado
-  const exameEmployeesInMonth = useMemo(() => {
+  // 4. Total Exame no Dia Atual
+  const exameTodayList = useMemo(() => {
     return categoryEmployees.filter((emp) =>
       leaves.some(
         (l) =>
           l.employeeId === emp.id &&
           l.type === 'EXAME' &&
-          dateColumns.some((col) => col.fullDate >= l.startDate && col.fullDate <= l.endDate)
+          selectedDateStr >= l.startDate &&
+          selectedDateStr <= l.endDate
       )
     );
-  }, [categoryEmployees, leaves, dateColumns]);
+  }, [categoryEmployees, leaves, selectedDateStr]);
+  const totalExameHoje = exameTodayList.length;
 
-  const totalFerias = vacationEmployeesInMonth.length;
-  const totalAtestado = atestadoEmployeesInMonth.length;
-  const totalINSS = inssEmployeesInMonth.length;
-  const totalExame = exameEmployeesInMonth.length;
-
-  // Total Ativos (colaboradores sem qualquer afastamento no mês)
-  const totalAtivos = useMemo(() => {
-    const onLeaveIds = new Set([
-      ...vacationEmployeesInMonth.map((v) => v.employee.id),
-      ...atestadoEmployeesInMonth.map((e) => e.id),
-      ...inssEmployeesInMonth.map((e) => e.id),
-      ...exameEmployeesInMonth.map((e) => e.id),
-    ]);
-    return Math.max(0, categoryEmployees.length - onLeaveIds.size);
-  }, [categoryEmployees, vacationEmployeesInMonth, atestadoEmployeesInMonth, inssEmployeesInMonth, exameEmployeesInMonth]);
-
-  // Total de Folga (Média diária de folgas no mês e total acumulado)
-  const { avgDailyFolga, totalFolgasMonth } = useMemo(() => {
-    if (categoryEmployees.length === 0 || dateColumns.length === 0) {
-      return { avgDailyFolga: 0, totalFolgasMonth: 0 };
-    }
-    let totalOffDays = 0;
-    dateColumns.forEach((col) => {
-      distributedTeams.forEach(({ team, members }) => {
-        members.forEach((emp) => {
-          const hasLeave = getDayLeave(emp.id, col.fullDate);
-          if (!hasLeave) {
-            const offs = getEmployeeOffsMap(emp.id, team.id);
-            if (offs[col.dayNumber] === true) {
-              totalOffDays++;
-            }
-          }
-        });
-      });
+  // 5. Total de Folga no Dia Atual (colaboradores de folga programada pela escala hoje, sem afastamento)
+  const folgaTodayList = useMemo(() => {
+    return categoryEmployees.filter((emp) => {
+      const hasLeave = getDayLeave(emp.id, selectedDateStr);
+      if (hasLeave) return false;
+      const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+      const offs = getEmployeeOffsMap(emp.id, team.id);
+      return offs[selectedDayForMetrics] === true;
     });
-    const avg = Math.round(totalOffDays / dateColumns.length);
-    return { avgDailyFolga: avg, totalFolgasMonth: totalOffDays };
-  }, [categoryEmployees, dateColumns, distributedTeams, currentMonthSchedule, isCurrentMonthGenerated, settings, leaves]);
+  }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
+  const totalFolgaHoje = folgaTodayList.length;
+
+  // 6. Total Ativos no Dia Atual (colaboradores escalados e trabalhando hoje)
+  const ativosTodayList = useMemo(() => {
+    return categoryEmployees.filter((emp) => {
+      const hasLeave = getDayLeave(emp.id, selectedDateStr);
+      if (hasLeave) return false;
+      const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+      const offs = getEmployeeOffsMap(emp.id, team.id);
+      return offs[selectedDayForMetrics] !== true;
+    });
+  }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
+  const totalAtivosHoje = ativosTodayList.length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 antialiased p-4 sm:p-8 flex flex-col font-sans">
@@ -1371,33 +1423,46 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               <Users className="w-3.5 h-3.5 text-blue-600" />
               Equipes:
             </span>
-            {distributedTeams.map(({ team, members }) => (
-              <div
-                key={team.id}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  if (dragOverTeamId !== team.id) setDragOverTeamId(team.id);
-                }}
-                onDragLeave={() => setDragOverTeamId(null)}
-                onDrop={(e) => handleDropOnTeam(e, team.id)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shrink-0 transition-all cursor-pointer ${
-                  team.badgeClass
-                } ${
-                  dragOverTeamId === team.id
-                    ? 'ring-2 ring-blue-500 scale-105 shadow-md bg-blue-100 font-extrabold text-blue-900'
-                    : 'hover:shadow-2xs'
-                }`}
-                title={`Arraste um colaborador aqui para transferir para a ${team.name}`}
-              >
-                <span
-                  className="w-2 h-2 rounded-full inline-block"
-                  style={{ backgroundColor: team.dotColor }}
-                ></span>
-                <span>{team.name}:</span>
-                <span className="font-extrabold">{members.length}</span>
-              </div>
-            ))}
+            {distributedTeams.map(({ team, members }) => {
+              const activeCount = members.filter((m) => !isEmployeeOnVacation(m.id)).length;
+              const vacationCount = members.length - activeCount;
+
+              return (
+                <div
+                  key={team.id}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverTeamId !== team.id) setDragOverTeamId(team.id);
+                  }}
+                  onDragLeave={() => setDragOverTeamId(null)}
+                  onDrop={(e) => handleDropOnTeam(e, team.id)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shrink-0 transition-all cursor-pointer ${
+                    team.badgeClass
+                  } ${
+                    dragOverTeamId === team.id
+                      ? 'ring-2 ring-blue-500 scale-105 shadow-md bg-blue-100 font-extrabold text-blue-900'
+                      : 'hover:shadow-2xs'
+                  }`}
+                  title={`Arraste um colaborador aqui para transferir para a ${team.name}`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block"
+                    style={{ backgroundColor: team.dotColor }}
+                  ></span>
+                  <span>{team.name}:</span>
+                  <span className="font-extrabold">{activeCount}</span>
+                  {vacationCount > 0 && (
+                    <span
+                      className="text-[10px] text-purple-700 bg-purple-100/90 px-1 rounded font-bold"
+                      title={`${vacationCount} colaborador(es) em férias (removido(s) da tabela)`}
+                    >
+                      +{vacationCount} 🏖️
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -1500,147 +1565,186 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           </div>
         </div>
 
-        {/* Painel de Indicadores / Totais Operacionais */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {/* 1. Total Ativos */}
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Total Ativos
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">
-                👥
-              </span>
+        {/* Painel de Indicadores / Totais Operacionais do DIA ATUAL */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between bg-white border border-slate-200/90 rounded-2xl px-4 py-2.5 shadow-2xs flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <div>
+                <span className="text-xs font-black text-slate-900 tracking-tight">
+                  Situação do Dia: {String(selectedDayForMetrics).padStart(2, '0')}/{String(viewMonth + 1).padStart(2, '0')}/{viewYear}
+                </span>
+                <span className={`ml-2 text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                  isSelectedDayToday
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                }`}>
+                  {isSelectedDayToday ? 'HOJE (DATA ATUAL)' : 'DIA SELECIONADO NA GRADE'}
+                </span>
+              </div>
             </div>
-            <div>
-              <div className="text-2xl font-black text-slate-900 tracking-tight">
-                {totalAtivos}
-              </div>
-              <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
-                operando na escala
-              </div>
+
+            <div className="flex items-center gap-2.5">
+              {!isSelectedDayToday && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMonth(todayMonth);
+                    setViewYear(todayYear);
+                    setSelectedDayForMetrics(todayDay);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-xl border border-blue-200 transition cursor-pointer active:scale-95 shadow-2xs"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Voltar para Data Atual ({String(todayDay).padStart(2, '0')}/{String(todayMonth + 1).padStart(2, '0')})</span>
+                </button>
+              )}
+              <span className="text-[11px] text-slate-500 font-semibold">
+                Setor: <strong>{categoryEmployees.length} colaboradores</strong>
+              </span>
             </div>
           </div>
 
-          {/* 2. Total de Folga */}
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Total Folga
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
-                ☕
-              </span>
-            </div>
-            <div>
-              <div className="text-2xl font-black text-slate-900 tracking-tight flex items-baseline gap-1">
-                {avgDailyFolga}
-                <span className="text-xs font-semibold text-slate-400">/ dia</span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {/* 1. Total Ativos Hoje */}
+            <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Total Ativos
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">
+                  👥
+                </span>
               </div>
-              <div className="text-[10px] font-semibold text-blue-600 mt-0.5 truncate" title={`Média diária (${totalFolgasMonth} folgas no mês)`}>
-                média diária ({totalFolgasMonth} no mês)
+              <div>
+                <div className="text-2xl font-black text-slate-900 tracking-tight">
+                  {totalAtivosHoje}
+                </div>
+                <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+                  trabalhando no turno hoje
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* 3. Total de Férias */}
-          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-            totalFerias > 0
-              ? 'bg-purple-50/80 border-purple-200 ring-1 ring-purple-300/40 text-purple-950'
-              : 'bg-white border-slate-200/90'
-          }`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalFerias > 0 ? 'text-purple-900' : 'text-slate-500'}`}>
-                Total Férias
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
-                🏖️
-              </span>
-            </div>
-            <div>
-              <div className={`text-2xl font-black tracking-tight ${totalFerias > 0 ? 'text-purple-950' : 'text-slate-900'}`}>
-                {totalFerias}
+            {/* 2. Total de Folga Hoje */}
+            <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Total Folga
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                  ☕
+                </span>
               </div>
-              <div className={`text-[10px] font-bold mt-0.5 ${totalFerias > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
-                {totalFerias > 0 ? `${totalFerias} em descanso` : 'nenhum no mês'}
+              <div>
+                <div className="text-2xl font-black text-slate-900 tracking-tight">
+                  {totalFolgaHoje}
+                </div>
+                <div className="text-[10px] font-semibold text-blue-600 mt-0.5">
+                  de folga pela escala hoje
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* 4. Total de Atestado */}
-          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-            totalAtestado > 0
-              ? 'bg-rose-50/80 border-rose-200 ring-1 ring-rose-300/40 text-rose-950'
-              : 'bg-white border-slate-200/90'
-          }`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalAtestado > 0 ? 'text-rose-900' : 'text-slate-500'}`}>
-                Total Atestado
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">
-                🩺
-              </span>
-            </div>
-            <div>
-              <div className={`text-2xl font-black tracking-tight ${totalAtestado > 0 ? 'text-rose-950' : 'text-slate-900'}`}>
-                {totalAtestado}
+            {/* 3. Total de Férias Hoje */}
+            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+              totalFeriasHoje > 0
+                ? 'bg-purple-50/80 border-purple-200 ring-1 ring-purple-300/40 text-purple-950'
+                : 'bg-white border-slate-200/90'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalFeriasHoje > 0 ? 'text-purple-900' : 'text-slate-500'}`}>
+                  Total Férias
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
+                  🏖️
+                </span>
               </div>
-              <div className={`text-[10px] font-bold mt-0.5 ${totalAtestado > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
-                {totalAtestado > 0 ? `${totalAtestado} afastado(s)` : 'nenhum no mês'}
+              <div>
+                <div className={`text-2xl font-black tracking-tight ${totalFeriasHoje > 0 ? 'text-purple-950' : 'text-slate-900'}`}>
+                  {totalFeriasHoje}
+                </div>
+                <div className={`text-[10px] font-bold mt-0.5 ${totalFeriasHoje > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
+                  {totalFeriasHoje > 0 ? `${totalFeriasHoje} em férias hoje` : 'nenhum hoje'}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* 5. Total INSS */}
-          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-            totalINSS > 0
-              ? 'bg-amber-50/80 border-amber-200 ring-1 ring-amber-300/40 text-amber-950'
-              : 'bg-white border-slate-200/90'
-          }`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalINSS > 0 ? 'text-amber-900' : 'text-slate-500'}`}>
-                Total INSS
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold">
-                🏥
-              </span>
-            </div>
-            <div>
-              <div className={`text-2xl font-black tracking-tight ${totalINSS > 0 ? 'text-amber-950' : 'text-slate-900'}`}>
-                {totalINSS}
+            {/* 4. Total de Atestado Hoje */}
+            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+              totalAtestadoHoje > 0
+                ? 'bg-rose-50/80 border-rose-200 ring-1 ring-rose-300/40 text-rose-950'
+                : 'bg-white border-slate-200/90'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalAtestadoHoje > 0 ? 'text-rose-900' : 'text-slate-500'}`}>
+                  Total Atestado
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">
+                  🩺
+                </span>
               </div>
-              <div className={`text-[10px] font-bold mt-0.5 ${totalINSS > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
-                {totalINSS > 0 ? `${totalINSS} pelo INSS` : 'nenhum no mês'}
+              <div>
+                <div className={`text-2xl font-black tracking-tight ${totalAtestadoHoje > 0 ? 'text-rose-950' : 'text-slate-900'}`}>
+                  {totalAtestadoHoje}
+                </div>
+                <div className={`text-[10px] font-bold mt-0.5 ${totalAtestadoHoje > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
+                  {totalAtestadoHoje > 0 ? `${totalAtestadoHoje} de atestado hoje` : 'nenhum hoje'}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* 6. Total Exame */}
-          <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-            totalExame > 0
-              ? 'bg-teal-50/80 border-teal-200 ring-1 ring-teal-300/40 text-teal-950'
-              : 'bg-white border-slate-200/90'
-          }`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-[11px] font-bold uppercase tracking-wider ${totalExame > 0 ? 'text-teal-900' : 'text-slate-500'}`}>
-                Total Exame
-              </span>
-              <span className="w-6 h-6 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center text-xs font-bold">
-                📋
-              </span>
-            </div>
-            <div>
-              <div className={`text-2xl font-black tracking-tight ${totalExame > 0 ? 'text-teal-950' : 'text-slate-900'}`}>
-                {totalExame}
+            {/* 5. Total INSS Hoje */}
+            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+              totalINSSHoje > 0
+                ? 'bg-amber-50/80 border-amber-200 ring-1 ring-amber-300/40 text-amber-950'
+                : 'bg-white border-slate-200/90'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalINSSHoje > 0 ? 'text-amber-900' : 'text-slate-500'}`}>
+                  Total INSS
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold">
+                  🏥
+                </span>
               </div>
-              <div className={`text-[10px] font-bold mt-0.5 ${totalExame > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
-                {totalExame > 0 ? `${totalExame} em exame` : 'nenhum no mês'}
+              <div>
+                <div className={`text-2xl font-black tracking-tight ${totalINSSHoje > 0 ? 'text-amber-950' : 'text-slate-900'}`}>
+                  {totalINSSHoje}
+                </div>
+                <div className={`text-[10px] font-bold mt-0.5 ${totalINSSHoje > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                  {totalINSSHoje > 0 ? `${totalINSSHoje} pelo INSS hoje` : 'nenhum hoje'}
+                </div>
+              </div>
+            </div>
+
+            {/* 6. Total Exame Hoje */}
+            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
+              totalExameHoje > 0
+                ? 'bg-teal-50/80 border-teal-200 ring-1 ring-teal-300/40 text-teal-950'
+                : 'bg-white border-slate-200/90'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalExameHoje > 0 ? 'text-teal-900' : 'text-slate-500'}`}>
+                  Total Exame
+                </span>
+                <span className="w-6 h-6 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center text-xs font-bold">
+                  📋
+                </span>
+              </div>
+              <div>
+                <div className={`text-2xl font-black tracking-tight ${totalExameHoje > 0 ? 'text-teal-950' : 'text-slate-900'}`}>
+                  {totalExameHoje}
+                </div>
+                <div className={`text-[10px] font-bold mt-0.5 ${totalExameHoje > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
+                  {totalExameHoje > 0 ? `${totalExameHoje} em exame hoje` : 'nenhum hoje'}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Card Destacado Acima da Tabela para Colaboradores em Férias */}
+        {/* Card Destacado Acima da Tabela para Colaboradores em Férias (Removidos da Tabela da Escala) */}
         {vacationEmployeesInMonth.length > 0 && (
           <div className="bg-gradient-to-r from-purple-50/90 via-purple-50/60 to-indigo-50/40 border border-purple-200/90 rounded-2xl p-4 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="flex items-center justify-between pb-3 border-b border-purple-200/60 flex-wrap gap-2">
@@ -1654,13 +1758,32 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                       Colaboradores em Férias no Mês ({MONTH_NAMES[viewMonth]}/{viewYear})
                     </h3>
                     <span className="bg-purple-200/90 text-purple-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-purple-300">
-                      {totalFerias} {totalFerias === 1 ? 'colaborador' : 'colaboradores'}
+                      {vacationEmployeesInMonth.length} {vacationEmployeesInMonth.length === 1 ? 'colaborador' : 'colaboradores'}
+                    </span>
+                    <span className="text-[10px] font-bold text-purple-700 bg-white/80 px-2 py-0.5 rounded-md border border-purple-200">
+                      Removidos da tabela abaixo
                     </span>
                   </div>
                   <p className="text-[11px] text-purple-700/90 mt-0.5">
-                    Durante o período de férias regulamentares, a rotação normal é suspensa e a escala continua estável para o restante da equipe.
+                    Estes colaboradores estão em período de férias regulamentares e foram retirados da grade operacional para manter o foco na escala de quem está trabalhando.
                   </p>
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vacationIds = new Set(vacationEmployeesInMonth.map((v) => v.leave.id));
+                    setLeaves((prev) => prev.filter((l) => !vacationIds.has(l.id)));
+                    showToast('Todos os colaboradores retornaram para a tabela da escala.');
+                  }}
+                  className="inline-flex items-center gap-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 hover:border-rose-300 text-xs font-bold px-3 py-1.5 rounded-xl shadow-2xs transition active:scale-95"
+                  title="Remover férias de todos e fazê-los retornar imediatamente para a tabela"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Retornar Todos para a Tabela</span>
+                </button>
               </div>
             </div>
 
@@ -1736,9 +1859,12 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleRemoveLeave(leave.id)}
+                        onClick={() => {
+                          handleRemoveLeave(leave.id);
+                          showToast(`🏖️ Férias de ${employee.name} removidas. Colaborador retornou para a tabela!`);
+                        }}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                        title="Remover férias"
+                        title="Remover férias e retornar colaborador para a tabela"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1796,36 +1922,64 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                     </th>
 
                     {/* Colunas de Datas do Mês Visualizado */}
-                    {dateColumns.map((col) => (
-                      <th
-                        key={col.dateKey}
-                        className={`border-r border-slate-200 px-1 py-2 min-w-[48px] text-center transition-colors ${
-                          col.isSunday
-                            ? 'bg-rose-50/70 text-rose-800'
-                            : col.isSaturday
-                            ? 'bg-amber-50/50 text-amber-900'
-                            : 'bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="text-[9px] font-bold text-slate-400 tracking-wider">
-                          {col.dayShort}
-                        </div>
-                        <div
-                          className={`text-xs font-bold mt-0.5 ${
-                            col.isSunday ? 'text-rose-700 font-extrabold' : 'text-slate-800'
+                    {dateColumns.map((col) => {
+                      const isToday =
+                        col.dayNumber === todayDay &&
+                        viewMonth === todayMonth &&
+                        viewYear === todayYear;
+                      const isSelected = col.dayNumber === selectedDayForMetrics;
+
+                      return (
+                        <th
+                          key={col.dateKey}
+                          onClick={() => setSelectedDayForMetrics(col.dayNumber)}
+                          className={`border-r border-slate-200 px-1 py-1.5 min-w-[50px] text-center transition-all cursor-pointer select-none hover:bg-blue-100/60 ${
+                            isToday
+                              ? 'bg-blue-100/80 text-blue-900 ring-2 ring-blue-500/50 ring-inset shadow-xs'
+                              : isSelected
+                              ? 'bg-blue-50 text-blue-900 border-b-2 border-b-blue-600'
+                              : col.isSunday
+                              ? 'bg-rose-50/70 text-rose-800'
+                              : col.isSaturday
+                              ? 'bg-amber-50/50 text-amber-900'
+                              : 'bg-slate-50 text-slate-700'
                           }`}
+                          title={`Clique para selecionar este dia (${col.dd}/${String(viewMonth + 1).padStart(2, '0')})${isToday ? ' - HOJE' : ''}`}
                         >
-                          {col.dd}
-                        </div>
-                      </th>
-                    ))}
+                          {isToday && (
+                            <span className="block text-[8px] font-black uppercase text-white bg-blue-600 rounded px-1 mb-0.5 leading-tight shadow-2xs">
+                              HOJE
+                            </span>
+                          )}
+                          <div className={`text-[9px] font-bold tracking-wider ${isToday ? 'text-blue-700 font-black' : 'text-slate-400'}`}>
+                            {col.dayShort}
+                          </div>
+                          <div
+                            className={`text-xs font-bold mt-0.5 ${
+                              isToday
+                                ? 'text-blue-950 font-black text-sm'
+                                : col.isSunday
+                                ? 'text-rose-700 font-extrabold'
+                                : 'text-slate-800'
+                            }`}
+                          >
+                            {col.dd}
+                          </div>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
 
                 {/* Linhas dos Colaboradores */}
                 <tbody className="divide-y divide-slate-100">
                   {distributedTeams.map(({ team, members }) => {
-                    if (members.length === 0) {
+                    // Remove da tabela os colaboradores que estão em férias (eles são exibidos no card de férias acima)
+                    const activeMembersInTable = members.filter(
+                      (emp) => !isEmployeeOnVacation(emp.id)
+                    );
+
+                    if (activeMembersInTable.length === 0) {
                       return (
                         <tr
                           key={`empty-team-${team.id}`}
@@ -1851,17 +2005,23 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                 className="w-2.5 h-2.5 rounded-full"
                                 style={{ backgroundColor: team.dotColor }}
                               />
-                              <span>{team.name} está sem colaboradores.</span>
-                              <span className="text-blue-600 font-bold underline">
-                                Solte um colaborador aqui para transferir para esta equipe
+                              <span>
+                                {members.length > 0
+                                  ? `${team.name}: Todos os colaboradores estão em férias (removidos da tabela).`
+                                  : `${team.name} está sem colaboradores.`}
                               </span>
+                              {members.length === 0 && (
+                                <span className="text-blue-600 font-bold underline">
+                                  Solte um colaborador aqui para transferir para esta equipe
+                                </span>
+                              )}
                             </span>
                           </td>
                         </tr>
                       );
                     }
 
-                    return members.map((emp) => {
+                    return activeMembersInTable.map((emp) => {
                       let empOffs = currentMonthSchedule[emp.id];
                       if (!empOffs && isCurrentMonthGenerated) {
                         // Se o colaborador acabou de ser cadastrado no setor enquanto a escala já estava gerada,
@@ -2006,12 +2166,23 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                           {dateColumns.map((col) => {
                             const dayLeave = getDayLeave(emp.id, col.fullDate);
                             const isOff = empOffs[col.dayNumber] === true;
+                            const isTodayCol =
+                              col.dayNumber === todayDay &&
+                              viewMonth === todayMonth &&
+                              viewYear === todayYear;
+                            const isSelectedCol = col.dayNumber === selectedDayForMetrics;
 
                             return (
                               <td
                                 key={col.dayNumber}
                                 onClick={() => handleToggleCell(emp.id, col.dayNumber)}
-                                className="border-r border-slate-200/80 p-1 text-center cursor-pointer select-none transition-all active:scale-95"
+                                className={`border-r border-slate-200/80 p-1 text-center cursor-pointer select-none transition-all active:scale-95 ${
+                                  isTodayCol
+                                    ? 'bg-blue-50/50'
+                                    : isSelectedCol
+                                    ? 'bg-blue-50/20'
+                                    : ''
+                                }`}
                                 title={`${emp.name} - ${col.dd}/${String(viewMonth + 1).padStart(2, '0')}: ${
                                   dayLeave
                                     ? dayLeave.type === 'FERIAS'
