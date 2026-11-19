@@ -2,7 +2,7 @@ export type ShiftId = 'manha' | 'tarde' | 'noite';
 
 export type ScaleType = '5x1' | '5x2' | '6x1' | '12x36';
 
-export type GenerationMode = 'nova' | 'continuidade';
+export type GenerationMode = 'nova' | 'continuidade' | 'manual';
 
 export type CompensatorySundayMode = 'auto' | 'manual';
 export type CompensatoryStrategy = 'swap' | 'additional';
@@ -37,6 +37,8 @@ export interface Employee {
 export interface CategoryScheduleSettings {
   scaleType: ScaleType;
   numTeams: number;
+  offDayMode?: 'auto' | 'manual';
+  customTeamOffDays?: Record<number, number>; // teamId -> primeiro dia de folga (1..7)
 }
 
 export interface GenerateFolgaOptions {

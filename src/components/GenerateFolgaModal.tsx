@@ -13,6 +13,7 @@ import {
   Repeat,
   Calendar,
   CheckCircle2,
+  Edit3,
 } from 'lucide-react';
 
 interface GenerateFolgaModalProps {
@@ -224,10 +225,36 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
                 </div>
                 <div className="flex-1">
                   <span className="font-bold text-xs text-slate-900 block">
-                    Gerar Escala Nova
+                    Gerar Escala Nova Automática
                   </span>
                   <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                    Inicia um ciclo novo a partir do dia 01 de {selectedMonthName}, distribuindo as equipes (Verde, Azul, Amarela...) com a rotação padrão.
+                    Inicia um ciclo novo a partir do dia 01 de {selectedMonthName}, distribuindo as equipes com a rotação contínua ideal.
+                  </p>
+                </div>
+              </div>
+
+              {/* Opção: Configuração Manual / Em Branco */}
+              <div
+                onClick={() => setMode('manual')}
+                className={`p-4 rounded-xl border transition cursor-pointer flex items-start gap-3.5 ${
+                  mode === 'manual'
+                    ? 'border-amber-600 bg-amber-50/70 ring-2 ring-amber-500/20'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    mode === 'manual' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <span className="font-bold text-xs text-slate-900 block text-amber-950">
+                    ✏️ Configuração Manual (Escala em Branco)
+                  </span>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    Deixa o mês livre para você definir as folgas e plantões manualmente, clicando diretamente nas células dos colaboradores.
                   </p>
                 </div>
               </div>

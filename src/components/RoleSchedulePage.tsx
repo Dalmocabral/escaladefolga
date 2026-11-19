@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
   GripVertical,
   ArrowUpDown,
+  Edit3,
 } from 'lucide-react';
 
 interface RoleSchedulePageProps {
@@ -95,38 +96,29 @@ const generateMonthDays = (year: number, month: number): DayColumn[] => {
   return columns;
 };
 
-// Regra que define o primeiro dia de folga para cada equipe (folgas contínuas e sequenciais entre as equipes)
+// Regra que define o primeiro dia de folga para cada equipe (folgas contínuas e sequenciais ou manuais)
 export const getInitialTeamOffDay = (
   teamIdx: number,
   _numTeams: number,
-  scaleType: ScaleType
+  scaleType: ScaleType,
+  customTeamOffDays?: Record<number, number>
 ): number => {
+  if (customTeamOffDays && customTeamOffDays[teamIdx] !== undefined) {
+    return customTeamOffDays[teamIdx];
+  }
+
   if (scaleType === '5x1') {
     // Escala 5x1: ciclo de 6 dias (5 trabalhados + 1 folga)
-    // Folgas contínuas e sequenciais entre as equipes (sem pular dias):
-    // Equipe 0 (Verde) -> Dia 1 (01, 07, 13, 19, 25, 31)
-    // Equipe 1 (Azul) -> Dia 2 (02, 08, 14, 20, 26)
-    // Equipe 2 (Amarela) -> Dia 3 (03, 09, 15, 21, 27)
-    // Equipe 3 (Vermelha) -> Dia 4 (04, 10, 16, 22, 28)
-    // Equipe 4 (Cinza) -> Dia 5 (05, 11, 17, 23, 29)
     return (teamIdx % 6) + 1;
   }
 
   if (scaleType === '5x2') {
     // Escala 5x2: ciclo de 7 dias (5 trabalhados + 2 folgas consecutivas - uma atrás da outra)
-    // Folgas contínuas e sequenciais entre as equipes para maximizar a presença de colaboradores no trabalho:
-    // Equipe 0 (Verde) -> Folgas no Dia 1 e 2 (01-02, 08-09, 15-16, 22-23, 29-30)
-    // Equipe 1 (Azul) -> Folgas no Dia 2 e 3 (02-03, 09-10, 16-17, 23-24, 30)
-    // Equipe 2 (Amarela) -> Folgas no Dia 3 e 4 (03-04, 10-11, 17-18, 24-25)
-    // Equipe 3 (Vermelha) -> Folgas no Dia 4 e 5 (04-05, 11-12, 18-19, 25-26)
-    // Equipe 4 (Cinza) -> Folgas no Dia 5 e 6 (05-06, 12-13, 19-20, 26-27)
     return (teamIdx % 7) + 1;
   }
 
   if (scaleType === '6x1') {
     // Escala 6x1: ciclo de 7 dias (6 trabalhados + 1 folga)
-    // Folgas contínuas e sequenciais entre as equipes:
-    // Equipe 0 -> Dia 1, Equipe 1 -> Dia 2, Equipe 2 -> Dia 3, etc.
     return (teamIdx % 7) + 1;
   }
 
@@ -141,7 +133,8 @@ const buildInitialNovemberSchedule = (
   roleName: string,
   numTeams: number,
   scaleType: ScaleType,
-  savedAssignments?: Record<number, string[]>
+  savedAssignments?: Record<number, string[]>,
+  customTeamOffDays?: Record<number, number>
 ): Record<string, Record<number, boolean>> => {
   const schedule: Record<string, Record<number, boolean>> = {};
   const catEmployees = employees.filter(
@@ -168,7 +161,7 @@ const buildInitialNovemberSchedule = (
   }
 
   teamGroups.forEach(({ teamId, memberIds }) => {
-    const firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType);
+    const firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType, customTeamOffDays);
 
     memberIds.forEach((empId) => {
       const daysOff: Record<number, boolean> = {};
@@ -552,33 +545,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-          // Detecta se a escala salva anteriormente continha distorção abusiva (> 6 dias trabalhados seguidos)
-          let hasAnomaly = false;
-          for (const mKey of Object.keys(parsed)) {
-            const mData = parsed[mKey] || {};
-            for (const empId of Object.keys(mData)) {
-              const offs = mData[empId] || {};
-              let consecutiveWork = 0;
-              for (let d = 1; d <= 31; d++) {
-                if (offs[d] === true) {
-                  consecutiveWork = 0;
-                } else if (offs[d] === false) {
-                  consecutiveWork++;
-                  if (consecutiveWork > 6) {
-                    hasAnomaly = true;
-                    break;
-                  }
-                }
-              }
-              if (hasAnomaly) break;
-            }
-            if (hasAnomaly) break;
-          }
-
-          if (!hasAnomaly) {
-            return parsed;
-          }
-          console.warn('Detectada escala local com períodos abusivos. Regenerando escala corrigida...');
+          return parsed;
         }
       }
     } catch (e) {
@@ -753,12 +720,37 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
   };
 
-  // Toggle cell directly in currently viewed month
+  // Toggle cell directly in currently viewed month (Configuração Manual Célula a Célula)
   const handleToggleCell = (empId: string, dayNumber: number) => {
+    // 1. Verifica se o colaborador tem afastamento ativo (Férias/Atestado) nesta data
+    const activeLeave = leaves.find((l) => l.employeeId === empId);
+    const dateCol = dateColumns.find((c) => c.dayNumber === dayNumber);
+    if (
+      activeLeave &&
+      dateCol &&
+      dateCol.fullDate >= activeLeave.startDate &&
+      dateCol.fullDate <= activeLeave.endDate
+    ) {
+      const emp = categoryEmployees.find((e) => e.id === empId);
+      const leaveTypeStr = activeLeave.type === 'FERIAS' ? 'Férias' : 'Atestado';
+      showToast(
+        `🏖️ ${emp?.name || 'Colaborador'} está em período de ${leaveTypeStr} neste dia. Clique no nome dele para editar ou remover o afastamento.`
+      );
+      return;
+    }
+
     setMonthlySchedules((prev) => {
       const monthData = prev[currentMonthKey] || {};
       const empOff = monthData[empId] || {};
       const isCurrentlyOff = empOff[dayNumber] ?? false;
+      const willBeOff = !isCurrentlyOff;
+
+      const emp = categoryEmployees.find((e) => e.id === empId);
+      showToast(
+        willBeOff
+          ? `⚪ Folga manual aplicada: ${emp?.name || 'Colaborador'} no dia ${String(dayNumber).padStart(2, '0')}/${String(viewMonth + 1).padStart(2, '0')}.`
+          : `🟩 Trabalho manual definido: ${emp?.name || 'Colaborador'} no dia ${String(dayNumber).padStart(2, '0')}/${String(viewMonth + 1).padStart(2, '0')}.`
+      );
 
       return {
         ...prev,
@@ -766,7 +758,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           ...monthData,
           [empId]: {
             ...empOff,
-            [dayNumber]: !isCurrentlyOff,
+            [dayNumber]: willBeOff,
           },
         },
       };
@@ -1002,7 +994,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     );
   };
 
-  // Gerador de Escala Mensal (com suporte a Continuidade, Equipes Customizadas e Folga Compensatória Dominical)
+  // Gerador de Escala Mensal (com suporte a Continuidade, Equipes Customizadas, Modo Manual e Folga Compensatória Dominical)
   const generateScheduleForMonth = (
     targetMonth: number,
     targetYear: number,
@@ -1013,6 +1005,32 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   ) => {
     const targetKey = `${targetYear}-${targetMonth}`;
     const daysInTarget = new Date(targetYear, targetMonth + 1, 0).getDate();
+
+    // Se o modo for manual, limpa as folgas e deixa todos em trabalho para o usuário definir manualmente
+    if (mode === 'manual') {
+      const blankMonthData: Record<string, Record<number, boolean>> = {};
+      const teams = explicitTeams ?? distributedTeams;
+      teams.forEach(({ members }) => {
+        members.forEach((emp) => {
+          const empDays: Record<number, boolean> = {};
+          for (let d = 1; d <= daysInTarget; d++) {
+            empDays[d] = false;
+          }
+          blankMonthData[emp.id] = empDays;
+        });
+      });
+      setMonthlySchedules((prev) => ({
+        ...prev,
+        [targetKey]: blankMonthData,
+      }));
+      setViewMonth(targetMonth);
+      setViewYear(targetYear);
+      if (tableContainerRef.current) {
+        tableContainerRef.current.scrollLeft = 0;
+      }
+      showToast('✏️ Escala em branco pronta! Clique diretamente nas células para definir as folgas manualmente.');
+      return;
+    }
 
     // Dados do mês anterior para cálculo de continuidade
     const pMonth = targetMonth === 0 ? 11 : targetMonth - 1;
@@ -1029,9 +1047,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     teams.forEach(({ team, members }) => {
       if (members.length === 0) return;
 
-      // O ciclo de folgas pertence à EQUIPE. Todos os membros da mesma equipe
-      // devem trabalhar e folgar de forma rigorosamente sincronizada!
-      let teamFirstOffDay = getInitialTeamOffDay(team.id, cfg.numTeams, cfg.scaleType);
+      // O ciclo de folgas pertence à EQUIPE (respeita dias customizados se configurado manualmente)
+      let teamFirstOffDay = getInitialTeamOffDay(
+        team.id,
+        cfg.numTeams,
+        cfg.scaleType,
+        cfg.customTeamOffDays
+      );
 
       if (mode === 'continuidade' && prevMonthData) {
         // Encontra o histórico dos membros da equipe no mês anterior
@@ -1150,6 +1172,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       options.mode,
       options.compensatorySunday ?? 'auto'
     );
+
+    if (options.mode === 'manual') {
+      showToast(
+        `✏️ Escala de ${MONTH_NAMES[options.targetMonth]}/${options.targetYear} pronta para Configuração Manual! Clique nas células para definir as folgas.`
+      );
+      return;
+    }
 
     const modeLabel = options.mode === 'continuidade' ? 'com continuidade do mês anterior' : 'como nova escala';
     const compLabel = options.compensatorySunday === 'manual' ? ' (Folga compensatória: manual)' : ' (Folga compensatória dominical automática aplicada)';
@@ -1308,6 +1337,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               <span>Configuração</span>
             </button>
 
+            {/* Botão Configurar Manual */}
+            <button
+              onClick={() => {
+                generateScheduleForMonth(viewMonth, viewYear, settings, 'manual');
+              }}
+              disabled={categoryEmployees.length === 0}
+              className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-xs transition active:scale-98"
+              title="Limpar a grade e abrir em branco para configurar folgas manualmente clicando nas células"
+            >
+              <Edit3 className="w-4 h-4 text-amber-700" />
+              <span>Configurar Manual</span>
+            </button>
+
             {/* Botão Gerar Folga */}
             <button
               onClick={() => setIsGenerateModalOpen(true)}
@@ -1337,6 +1379,16 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             >
               <RotateCcw className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+
+        {/* Banner de Dica para Configuração Manual */}
+        <div className="flex items-center justify-between bg-blue-50/80 border border-blue-200 rounded-xl px-4 py-2.5 text-xs text-blue-900 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <span className="text-base shrink-0">💡</span>
+            <span>
+              <strong>Configuração Manual Habilitada:</strong> Você pode <strong>clicar diretamente em qualquer célula</strong> da tabela para alternar entre <strong>Trabalho</strong> e <strong>Folga</strong>. No botão <strong>Configuração</strong>, você também pode definir o 1º dia de folga de cada equipe manualmente.
+            </span>
           </div>
         </div>
 
@@ -1382,7 +1434,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
                     {/* Coluna 3: Colaborador */}
                     <th className="sticky left-[160px] z-20 bg-slate-50 border-r border-slate-200 py-3 px-4 text-left font-bold text-[11px] text-slate-600 uppercase tracking-wider min-w-[240px] shadow-xs">
-                      Colaborador (Clique p/ Afastamento)
+                      Colaborador (Clique p/ Opções / Férias)
                     </th>
 
                     {/* Colunas de Datas do Mês Visualizado */}
@@ -1666,8 +1718,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             }
 
             generateScheduleForMonth(viewMonth, viewYear, newSettings, 'nova', 'auto', targetTeams);
+            const modeDesc = newSettings.offDayMode === 'manual' ? ' (Folgas manuais aplicadas por equipe)' : '';
             showToast(
-              `Configurações aplicadas: Escala ${newSettings.scaleType} com ${newSettings.numTeams} equipes e folgas sincronizadas!`
+              `Configurações salvas: Escala ${newSettings.scaleType} com ${newSettings.numTeams} equipes${modeDesc}!`
             );
           }}
         />

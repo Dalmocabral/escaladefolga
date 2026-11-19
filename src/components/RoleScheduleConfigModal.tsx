@@ -22,11 +22,27 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
 }) => {
   const [scaleType, setScaleType] = useState<ScaleType>(currentSettings.scaleType);
   const [numTeams, setNumTeams] = useState<number>(currentSettings.numTeams);
+  const [offDayMode, setOffDayMode] = useState<'auto' | 'manual'>(
+    currentSettings.offDayMode || 'auto'
+  );
+  const [customTeamOffDays, setCustomTeamOffDays] = useState<Record<number, number>>(
+    currentSettings.customTeamOffDays || {
+      0: 1,
+      1: 2,
+      2: 3,
+      3: 4,
+      4: 5,
+    }
+  );
 
   useEffect(() => {
     if (isOpen) {
       setScaleType(currentSettings.scaleType);
       setNumTeams(currentSettings.numTeams);
+      setOffDayMode(currentSettings.offDayMode || 'auto');
+      if (currentSettings.customTeamOffDays) {
+        setCustomTeamOffDays(currentSettings.customTeamOffDays);
+      }
     }
   }, [isOpen, currentSettings]);
 
@@ -44,11 +60,20 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
     };
   });
 
+  const handleCustomDayChange = (teamId: number, day: number) => {
+    setCustomTeamOffDays((prev) => ({
+      ...prev,
+      [teamId]: day,
+    }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
       scaleType,
       numTeams,
+      offDayMode,
+      customTeamOffDays: offDayMode === 'manual' ? customTeamOffDays : undefined,
     });
     onClose();
   };
@@ -140,13 +165,13 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 <Users className="w-3.5 h-3.5 text-slate-500" />
                 Distribuição Automática ({totalEmployees} colaboradores):
               </span>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {preview.map(({ team, count }) => (
                   <div
                     key={team.id}
                     className="p-2 rounded-lg bg-white border border-slate-200 text-center shadow-2xs"
                   >
-                    <span className="text-[10px] font-bold text-slate-500 block">
+                    <span className="text-[10px] font-bold text-slate-500 block truncate">
                       {team.name}
                     </span>
                     <span className="text-sm font-extrabold text-slate-900">
@@ -156,6 +181,99 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* 3. Modo de Definição das Folgas (Automático ou Manual) */}
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                Definição das Folgas das Equipes
+              </label>
+              <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                {offDayMode === 'manual' ? '✏️ Modo Manual Ativo' : '🔄 Modo Automático'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setOffDayMode('auto')}
+                className={`p-2.5 rounded-xl border text-left transition ${
+                  offDayMode === 'auto'
+                    ? 'border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-500/20 font-bold'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <div className="text-xs font-bold">🔄 Automático</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  Folgas contínuas e balanceadas
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOffDayMode('manual')}
+                className={`p-2.5 rounded-xl border text-left transition ${
+                  offDayMode === 'manual'
+                    ? 'border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-500/20 font-bold'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <div className="text-xs font-bold">✏️ Manual por Equipe</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  Você escolhe o dia de cada equipe
+                </div>
+              </button>
+            </div>
+
+            {/* Painel de Configuração Manual por Equipe */}
+            {offDayMode === 'manual' && (
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
+                <span className="text-[11px] font-bold text-amber-900 block">
+                  Escolha o 1º dia de folga no mês de cada equipe:
+                </span>
+                <div className="space-y-1.5">
+                  {preview.map(({ team }) => {
+                    const currentVal = customTeamOffDays[team.id] ?? (team.id + 1);
+                    return (
+                      <div
+                        key={team.id}
+                        className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-2xs text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: team.dotColor }}
+                          />
+                          <span className="font-bold text-slate-800">{team.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-500">1º Dia de Folga:</span>
+                          <select
+                            value={currentVal}
+                            onChange={(e) =>
+                              handleCustomDayChange(team.id, Number(e.target.value))
+                            }
+                            className="bg-slate-50 border border-slate-300 text-xs font-bold text-slate-800 rounded-lg px-2 py-1 focus:bg-white focus:ring-2 focus:ring-blue-500"
+                          >
+                            {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                              <option key={d} value={d}>
+                                Dia {String(d).padStart(2, '0')}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-amber-800 leading-tight">
+                  {scaleType === '5x2'
+                    ? '💡 Em escala 5x2, ao escolher o Dia X, a equipe folga os dias X e X+1 seguidos a cada 7 dias.'
+                    : '💡 As folgas da equipe se repetirão a cada ciclo com base no primeiro dia escolhido.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Footer Buttons */}
