@@ -1940,51 +1940,25 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           </div>
         </div>
 
-        {/* Card Destacado Acima da Tabela para Colaboradores em Férias (Removidos da Tabela da Escala) */}
+        {/* Lista Destacada Acima da Tabela para Colaboradores em Férias */}
         {vacationEmployeesInMonth.length > 0 && (
           <div className="bg-gradient-to-r from-purple-50/90 via-purple-50/60 to-indigo-50/40 border border-purple-200/90 rounded-2xl p-4 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-purple-200/60 flex-wrap gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center text-base shadow-xs shrink-0">
-                  🏖️
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-xs sm:text-sm text-purple-950">
-                      Colaboradores em Férias no Mês ({MONTH_NAMES[viewMonth]}/{viewYear})
-                    </h3>
-                    <span className="bg-purple-200/90 text-purple-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-purple-300">
-                      {vacationEmployeesInMonth.length} {vacationEmployeesInMonth.length === 1 ? 'colaborador' : 'colaboradores'}
-                    </span>
-                    <span className="text-[10px] font-bold text-purple-700 bg-white/80 px-2 py-0.5 rounded-md border border-purple-200">
-                      Removidos da tabela abaixo
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-purple-700/90 mt-0.5">
-                    Estes colaboradores estão em período de férias regulamentares e foram retirados da grade operacional para manter o foco na escala de quem está trabalhando.
-                  </p>
-                </div>
+            <div className="flex items-center gap-2.5 pb-2.5 border-b border-purple-200/60">
+              <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center text-sm shadow-xs shrink-0">
+                🏖️
               </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const vacationIds = new Set(vacationEmployeesInMonth.map((v) => v.leave.id));
-                    setLeaves((prev) => prev.filter((l) => !vacationIds.has(l.id)));
-                    showToast('Todos os colaboradores retornaram para a tabela da escala.');
-                  }}
-                  className="inline-flex items-center gap-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 hover:border-rose-300 text-xs font-bold px-3 py-1.5 rounded-xl shadow-2xs transition active:scale-95"
-                  title="Remover férias de todos e fazê-los retornar imediatamente para a tabela"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Retornar Todos para a Tabela</span>
-                </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-xs sm:text-sm text-purple-950">
+                  Colaboradores em Férias no Mês ({MONTH_NAMES[viewMonth]}/{viewYear})
+                </h3>
+                <span className="bg-purple-200/90 text-purple-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-purple-300">
+                  {vacationEmployeesInMonth.length} {vacationEmployeesInMonth.length === 1 ? 'colaborador' : 'colaboradores'}
+                </span>
               </div>
             </div>
 
-            {/* Grid dos Colaboradores em Férias */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-3">
+            {/* Lista dos Colaboradores em Férias */}
+            <div className="flex flex-col divide-y divide-purple-100 bg-white/95 rounded-xl border border-purple-200/80 overflow-hidden shadow-2xs mt-2.5">
               {vacationEmployeesInMonth.map(({ employee, leave, team }) => {
                 const [, sMonth, sDay] = leave.startDate.split('-');
                 const [, eMonth, eDay] = leave.endDate.split('-');
@@ -2001,11 +1975,12 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                 return (
                   <div
                     key={leave.id}
-                    className="bg-white/95 rounded-xl border border-purple-200/80 p-3 shadow-2xs hover:shadow-xs hover:border-purple-300 transition flex items-center justify-between gap-3"
+                    className="p-2.5 sm:px-3 hover:bg-purple-50/50 transition flex items-center justify-between gap-3"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
+                      {/* Avatar */}
                       <div
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${team.avatarBg}`}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${team.avatarBg}`}
                       >
                         {employee.name
                           .split(' ')
@@ -2013,34 +1988,37 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                           .map((n) => n[0])
                           .join('')}
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-xs text-slate-900 truncate">
-                            {employee.name}
-                          </span>
-                          <span className="text-[9px] font-mono text-slate-400">
-                            ({employee.registration})
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: team.dotColor }}
-                            />
-                            {team.name}
-                          </span>
-                          <span className="text-slate-300">•</span>
-                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100/70 px-1.5 py-0.5 rounded border border-purple-200">
-                            {startStr} até {endStr} ({diffDays} dias)
-                          </span>
-                        </div>
-                        {leave.observation && (
-                          <div className="text-[10px] text-slate-500 truncate mt-0.5 italic">
-                            {leave.observation}
-                          </div>
-                        )}
+
+                      {/* Nome e Matrícula */}
+                      <div className="flex items-center gap-1.5 min-w-[180px] shrink-0">
+                        <span className="font-bold text-xs text-slate-900">
+                          {employee.name}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          ({employee.registration})
+                        </span>
                       </div>
+
+                      {/* Equipe */}
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 min-w-[110px] shrink-0">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: team.dotColor }}
+                        />
+                        {team.name}
+                      </span>
+
+                      {/* Período de Férias */}
+                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100/70 px-2 py-0.5 rounded border border-purple-200 shrink-0">
+                        {startStr} até {endStr} ({diffDays} dias)
+                      </span>
+
+                      {/* Observação */}
+                      {leave.observation && (
+                        <span className="text-[10px] text-slate-500 truncate italic hidden md:inline">
+                          {leave.observation}
+                        </span>
+                      )}
                     </div>
 
                     {/* Ações Rápidas */}
