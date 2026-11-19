@@ -210,10 +210,10 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
                 <span className="text-base shrink-0">🛡️</span>
                 <div>
                   <div className="font-bold text-xs">
-                    Reorganização Automática de Equipes (Regra dos 6 Dias)
+                    Continuidade Real de Folgas e Ciclos de Trabalho
                   </div>
                   <div className="text-[11px] text-indigo-800 mt-0.5 leading-relaxed">
-                    O sistema analisará os dias trabalhados no final de {previousMonthLabel} e reorganizará os colaboradores entre as equipes para <strong>garantir que nenhum colaborador ultrapasse 6 dias consecutivos trabalhados</strong> na transição {scaleType !== targetScaleType ? `(${scaleType} ➔ ${targetScaleType})` : ''}.
+                    O sistema dará continuidade ininterrupta ao ciclo de cada equipe a partir do final de {previousMonthLabel}: quem folgou no final de {previousMonthLabel} trabalhará os 5 dias regulamentares antes de folgar, garantindo <strong>folgas contínuas e nenhum colaborador trabalhando mais de 6 dias consecutivos</strong>.
                   </div>
                 </div>
               </div>

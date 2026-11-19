@@ -329,3 +329,143 @@ export function inferTeamsFromMonthSchedule(
 
   return result;
 }
+
+export interface TeamContinuityResult {
+  firstOff: number;
+  isSecondDayOfOff: boolean;
+}
+
+/**
+ * Calcula o primeiro dia de folga de uma equipe no mês de destino baseado no histórico real do mês anterior.
+ * Respeita rigorosamente a continuidade:
+ * - Se folgou no penúltimo e último dia (ex: 29 e 30 em 5x2), trabalha 5 dias (1 a 5) e folga no dia 6 e 7!
+ * - Se folgou apenas no último dia (dia 30 foi folga #1), o dia 1 do novo mês é folga #2!
+ * - Se trabalhou W dias no final do mês anterior, trabalha 5 - W dias e folga no dia 6 - W!
+ */
+export function computeTeamContinuityOffDays(
+  prevMonthSchedule: Record<string, Record<number, boolean>>,
+  memberIds: string[],
+  prevTotalDays: number,
+  targetScaleType: ScaleType,
+  defaultFirstOff: number
+): TeamContinuityResult {
+  const membersWithHistory = memberIds.filter((id) => prevMonthSchedule[id]);
+  if (membersWithHistory.length === 0) {
+    return { firstOff: defaultFirstOff, isSecondDayOfOff: false };
+  }
+
+  let lastDayOffCount = 0;
+  let secondLastDayOffCount = 0;
+  const workedCounts: number[] = [];
+
+  membersWithHistory.forEach((id) => {
+    const offs = prevMonthSchedule[id] || {};
+    if (offs[prevTotalDays] === true) lastDayOffCount++;
+    if (offs[prevTotalDays - 1] === true) secondLastDayOffCount++;
+
+    let w = 0;
+    for (let d = prevTotalDays; d >= 1; d--) {
+      if (offs[d] === true) break;
+      w++;
+    }
+    workedCounts.push(w);
+  });
+
+  const half = membersWithHistory.length / 2;
+  const lastDayWasOff = lastDayOffCount >= half;
+  const secondLastDayWasOff = secondLastDayOffCount >= half;
+
+  const freqMap = new Map<number, number>();
+  workedCounts.forEach((w) => freqMap.set(w, (freqMap.get(w) || 0) + 1));
+  let bestWorked = workedCounts[0];
+  let maxF = 0;
+  freqMap.forEach((f, w) => {
+    if (f > maxF) {
+      maxF = f;
+      bestWorked = w;
+    }
+  });
+
+  if (targetScaleType === '5x2') {
+    if (lastDayWasOff) {
+      if (secondLastDayWasOff) {
+        // Folgou 29 e 30: trabalha 1, 2, 3, 4, 5 e folga dias 6 e 7!
+        return { firstOff: 6, isSecondDayOfOff: false };
+      } else {
+        // Dia 30 foi o 1º dia de folga: Dia 1 é o 2º dia de folga!
+        return { firstOff: 1, isSecondDayOfOff: true };
+      }
+    } else {
+      if (bestWorked >= 5) {
+        return { firstOff: 1, isSecondDayOfOff: false };
+      } else {
+        return { firstOff: 6 - bestWorked, isSecondDayOfOff: false };
+      }
+    }
+  }
+
+  if (targetScaleType === '5x1') {
+    if (lastDayWasOff) {
+      return { firstOff: 6, isSecondDayOfOff: false };
+    } else {
+      return { firstOff: bestWorked >= 5 ? 1 : 6 - bestWorked, isSecondDayOfOff: false };
+    }
+  }
+
+  if (targetScaleType === '6x1') {
+    if (lastDayWasOff) {
+      return { firstOff: 7, isSecondDayOfOff: false };
+    } else {
+      return { firstOff: bestWorked >= 6 ? 1 : 7 - bestWorked, isSecondDayOfOff: false };
+    }
+  }
+
+  return { firstOff: lastDayWasOff ? 2 : 1, isSecondDayOfOff: false };
+}
+
+/**
+ * Gera as folgas de um mês para uma equipe a partir da informação de continuidade calculada.
+ */
+export function buildTeamMonthOffDays(
+  daysInTarget: number,
+  scaleType: ScaleType,
+  continuity: TeamContinuityResult
+): Record<number, boolean> {
+  const days: Record<number, boolean> = {};
+
+  if (scaleType === '5x2') {
+    if (continuity.isSecondDayOfOff) {
+      days[1] = true;
+      for (let d = 2; d <= daysInTarget; d++) {
+        days[d] =
+          ((d - 7) % 7 + 7) % 7 === 0 ||
+          ((d - 8) % 7 + 7) % 7 === 0;
+      }
+    } else {
+      const f = continuity.firstOff;
+      for (let d = 1; d <= daysInTarget; d++) {
+        days[d] =
+          ((d - f) % 7 + 7) % 7 === 0 ||
+          ((d - (f + 1)) % 7 + 7) % 7 === 0;
+      }
+    }
+  } else if (scaleType === '5x1') {
+    const f = continuity.firstOff;
+    for (let d = 1; d <= daysInTarget; d++) {
+      days[d] = ((d - f) % 6 + 6) % 6 === 0;
+    }
+  } else if (scaleType === '6x1') {
+    const f = continuity.firstOff;
+    for (let d = 1; d <= daysInTarget; d++) {
+      days[d] = ((d - f) % 7 + 7) % 7 === 0;
+    }
+  } else {
+    // 12x36
+    const f = continuity.firstOff;
+    for (let d = 1; d <= daysInTarget; d++) {
+      days[d] = ((d - f) % 2 + 2) % 2 === 0;
+    }
+  }
+
+  return days;
+}

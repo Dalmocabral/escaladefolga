@@ -13,8 +13,9 @@ import type {
 import {
   distributeEmployeesToTeams,
   getInitialTeamOffDay,
-  reorganizeTeamsForScaleTransition,
   inferTeamsFromMonthSchedule,
+  computeTeamContinuityOffDays,
+  buildTeamMonthOffDays,
   TEAMS,
   type TeamConfig,
 } from '../utils/teams';
@@ -1162,24 +1163,12 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     let activeTeamsForGeneration: { team: TeamConfig; members: Employee[] }[] = [];
 
     // Se for continuidade e houver histórico do mês anterior:
-    // Reorganiza automaticamente os colaboradores entre as equipes para NUNCA passar de 6 dias trabalhados
+    // As equipes MANTÊM sua formação intacta (ninguém é tirado de sua equipe)
+    // e o ciclo de folgas de cada equipe CONTINUA exatamente de onde parou no mês anterior!
     if (mode === 'continuidade' && prevMonthData) {
-      const reorganizedMap = reorganizeTeamsForScaleTransition({
-        employees: uniqueCategoryEmployees,
-        prevMonthSchedule: prevMonthData,
-        prevMonthTotalDays,
-        targetScaleType: effectiveScaleType,
-        numTeams: cfg.numTeams,
-        customTeamOffDays: cfg.customTeamOffDays,
-      });
-
-      // Salva alocação de equipes no mês de destino e garante que o mês anterior mantenha seu próprio mapeamento intacto
-      const updates: Record<string, Record<number, string[]>> = {
-        [targetKey]: reorganizedMap,
-      };
-
-      if (!monthlyTeamAssignments[pKey] && prevMonthData) {
-        updates[pKey] = inferTeamsFromMonthSchedule(
+      let sourceTeamsMap = monthlyTeamAssignments[pKey];
+      if (!sourceTeamsMap || Object.values(sourceTeamsMap).every((list) => list.length === 0)) {
+        sourceTeamsMap = inferTeamsFromMonthSchedule(
           prevMonthData,
           monthlyScaleTypes[pKey] || '5x1',
           cfg.numTeams,
@@ -1187,21 +1176,50 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         );
       }
 
+      const safeNumTeams = Math.max(1, Math.min(cfg.numTeams, TEAMS.length));
+      const targetTeamsMap: Record<number, string[]> = {};
+      for (let i = 0; i < safeNumTeams; i++) targetTeamsMap[i] = [];
+
+      const assignedEmpIds = new Set<string>();
+      for (let i = 0; i < safeNumTeams; i++) {
+        const ids = sourceTeamsMap[i] || [];
+        ids.forEach((id) => {
+          if (!assignedEmpIds.has(id)) {
+            const emp = empById.get(id);
+            if (emp) {
+              targetTeamsMap[i].push(id);
+              assignedEmpIds.add(id);
+            }
+          }
+        });
+      }
+
+      // Distribui novos colaboradores não alocados para as equipes menores
+      uniqueCategoryEmployees.forEach((emp) => {
+        if (!assignedEmpIds.has(emp.id)) {
+          let minT = 0;
+          let minCount = Infinity;
+          for (let i = 0; i < safeNumTeams; i++) {
+            if (targetTeamsMap[i].length < minCount) {
+              minCount = targetTeamsMap[i].length;
+              minT = i;
+            }
+          }
+          targetTeamsMap[minT].push(emp.id);
+          assignedEmpIds.add(emp.id);
+        }
+      });
+
+      // Salva alocação de equipes no mês de destino
       setMonthlyTeamAssignments((prev) => ({
         ...prev,
-        ...updates,
+        [targetKey]: targetTeamsMap,
       }));
 
-      const safeNumTeams = Math.max(1, Math.min(cfg.numTeams, TEAMS.length));
-      activeTeamsForGeneration = TEAMS.slice(0, safeNumTeams).map((team) => {
-        const ids = reorganizedMap[team.id] || [];
-        const members: Employee[] = [];
-        ids.forEach((id) => {
-          const emp = empById.get(id);
-          if (emp) members.push(emp);
-        });
-        return { team, members };
-      });
+      activeTeamsForGeneration = TEAMS.slice(0, safeNumTeams).map((team) => ({
+        team,
+        members: targetTeamsMap[team.id].map((id) => empById.get(id)!).filter(Boolean),
+      }));
     } else {
       activeTeamsForGeneration = explicitTeams ?? distributedTeams;
       const targetMap: Record<number, string[]> = {};
@@ -1222,38 +1240,40 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }));
 
     const newMonthData: Record<string, Record<number, boolean>> = {};
-    const cycleLen =
-      effectiveScaleType === '5x1'
-        ? 6
-        : effectiveScaleType === '5x2'
-        ? 7
-        : effectiveScaleType === '6x1'
-        ? 7
-        : 2;
 
     activeTeamsForGeneration.forEach(({ team, members }) => {
       if (members.length === 0) return;
 
-      const teamFirstOffDay = getInitialTeamOffDay(
+      const memberIds = members.map((m) => m.id);
+      const defaultFirstOff = getInitialTeamOffDay(
         team.id,
         cfg.numTeams,
         effectiveScaleType,
         cfg.customTeamOffDays
       );
 
+      // CÁLCULO DE CONTINUIDADE REAL DA EQUIPE:
+      // Se for continuidade e houver histórico, calcula quando a equipe realmente deve folgar
+      // baseado no último dia de folga no mês anterior!
+      let continuity = {
+        firstOff: defaultFirstOff,
+        isSecondDayOfOff: false,
+      };
+
+      if (mode === 'continuidade' && prevMonthData) {
+        continuity = computeTeamContinuityOffDays(
+          prevMonthData,
+          memberIds,
+          prevMonthTotalDays,
+          effectiveScaleType,
+          defaultFirstOff
+        );
+      }
+
+      const teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
+
       members.forEach((emp) => {
-        const empDays: Record<number, boolean> = {};
-        for (let d = 1; d <= daysInTarget; d++) {
-          if (effectiveScaleType === '5x2') {
-            // Em 5x2: 2 folgas consecutivas (uma atrás da outra)
-            empDays[d] =
-              ((d - teamFirstOffDay) % 7 + 7) % 7 === 0 ||
-              ((d - (teamFirstOffDay + 1)) % 7 + 7) % 7 === 0;
-          } else {
-            empDays[d] = ((d - teamFirstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
-          }
-        }
-        newMonthData[emp.id] = empDays;
+        newMonthData[emp.id] = { ...teamDays };
       });
     });
 
