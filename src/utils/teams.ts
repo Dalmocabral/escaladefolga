@@ -261,3 +261,71 @@ export function reorganizeTeamsForScaleTransition({
   }
   return result;
 }
+
+/**
+ * Infere a distribuição de equipes de um mês a partir dos dias de folga gravados na escala.
+ * Garante que ao navegar para qualquer mês passado (como Outubro), os colaboradores apareçam
+ * exatamente nas equipes com as quais a escala daquele mês foi originalmente gerada.
+ */
+export function inferTeamsFromMonthSchedule(
+  schedule: Record<string, Record<number, boolean>>,
+  scaleType: ScaleType,
+  numTeams: number,
+  employees: Employee[]
+): Record<number, string[]> {
+  const safeNumTeams = Math.max(1, Math.min(numTeams, TEAMS.length));
+  const result: Record<number, string[]> = {};
+  for (let i = 0; i < safeNumTeams; i++) {
+    result[i] = [];
+  }
+
+  const cycleLen = scaleType === '5x1' ? 6 : scaleType === '5x2' ? 7 : scaleType === '6x1' ? 7 : 2;
+  const assigned = new Set<string>();
+
+  employees.forEach((emp) => {
+    const empDays = schedule[emp.id];
+    if (!empDays) return;
+
+    let firstOff = -1;
+    for (let d = 1; d <= cycleLen; d++) {
+      if (empDays[d] === true) {
+        firstOff = d;
+        break;
+      }
+    }
+
+    if (firstOff !== -1) {
+      let teamId = 0;
+      if (scaleType === '5x1') {
+        teamId = (firstOff - 1) % 6;
+      } else if (scaleType === '5x2') {
+        teamId = (firstOff - 1) % 7;
+      } else if (scaleType === '6x1') {
+        teamId = (firstOff - 1) % 7;
+      } else {
+        teamId = (firstOff - 1) % 2;
+      }
+
+      if (teamId < safeNumTeams) {
+        result[teamId].push(emp.id);
+        assigned.add(emp.id);
+      }
+    }
+  });
+
+  // Colaboradores sem folga nos primeiros dias são distribuídos nas equipes menores
+  const unassigned = employees.filter((e) => !assigned.has(e.id));
+  unassigned.forEach((emp) => {
+    let smallestTeamIdx = 0;
+    let smallestCount = Infinity;
+    for (let i = 0; i < safeNumTeams; i++) {
+      if (result[i].length < smallestCount) {
+        smallestCount = result[i].length;
+        smallestTeamIdx = i;
+      }
+    }
+    result[smallestTeamIdx].push(emp.id);
+  });
+
+  return result;
+}

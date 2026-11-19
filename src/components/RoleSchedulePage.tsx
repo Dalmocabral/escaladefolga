@@ -14,6 +14,7 @@ import {
   distributeEmployeesToTeams,
   getInitialTeamOffDay,
   reorganizeTeamsForScaleTransition,
+  inferTeamsFromMonthSchedule,
   TEAMS,
   type TeamConfig,
 } from '../utils/teams';
@@ -474,92 +475,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
   }, [categoryEmployees, settings.numTeams, teamAssignments, settings.scaleType]);
 
-  // Divisão de equipes respeitando a personalização flexível do usuário
-  // e garantindo com 100% de segurança que NENHUM colaborador apareça duplicado na tabela
-  const distributedTeams: { team: TeamConfig; members: Employee[] }[] = useMemo(() => {
-    const safeNumTeams = Math.max(1, Math.min(settings.numTeams, TEAMS.length));
-    const activeTeams = TEAMS.slice(0, safeNumTeams);
-
-    // Mapeia colaboradores únicos por ID e também previne colaboradores duplicados (mesmo nome ou matrícula)
-    const empById = new Map<string, Employee>();
-    const seenRegistrations = new Set<string>();
-    const seenNames = new Set<string>();
-    const uniqueCategoryEmployees: Employee[] = [];
-
-    categoryEmployees.forEach((emp) => {
-      const regKey = emp.registration?.trim().toUpperCase();
-      const nameKey = emp.name?.trim().toLowerCase();
-      if (regKey && seenRegistrations.has(regKey)) {
-        return;
-      }
-      if (nameKey && seenNames.has(nameKey)) {
-        return;
-      }
-      if (regKey) seenRegistrations.add(regKey);
-      if (nameKey) seenNames.add(nameKey);
-      empById.set(emp.id, emp);
-      uniqueCategoryEmployees.push(emp);
-    });
-
-    const globallyAssignedEmpIds = new Set<string>();
-    const activeAssignments = monthlyTeamAssignments[currentMonthKey] || teamAssignments;
-
-    const result: { team: TeamConfig; members: Employee[] }[] = activeTeams.map((team) => {
-      const memberIds = activeAssignments[team.id] || [];
-      const members: Employee[] = [];
-      memberIds.forEach((id: string) => {
-        // Bloqueia se já tiver sido adicionado a qualquer equipe
-        if (!globallyAssignedEmpIds.has(id)) {
-          const emp = empById.get(id);
-          if (emp) {
-            globallyAssignedEmpIds.add(id);
-            members.push(emp);
-          }
-        }
-      });
-      return { team, members };
-    });
-
-    // Se houver algum colaborador recém-cadastrado ainda não alocado no state, distribui sem duplicar
-    const unassigned = uniqueCategoryEmployees.filter((emp) => !globallyAssignedEmpIds.has(emp.id));
-    if (unassigned.length > 0) {
-      unassigned.forEach((emp) => {
-        if (!globallyAssignedEmpIds.has(emp.id)) {
-          globallyAssignedEmpIds.add(emp.id);
-          let smallestTeamIdx = 0;
-          let smallestCount = Infinity;
-          result.forEach((t, idx) => {
-            if (t.members.length < smallestCount) {
-              smallestCount = t.members.length;
-              smallestTeamIdx = idx;
-            }
-          });
-          result[smallestTeamIdx].members.push(emp);
-        }
-      });
-    }
-
-    return result;
-  }, [categoryEmployees, settings.numTeams, teamAssignments, monthlyTeamAssignments, currentMonthKey]);
-
-  // Mapeamento rápido de colaborador -> equipe
-  const employeeTeamMap = useMemo(() => {
-    const map = new Map<string, TeamConfig>();
-    distributedTeams.forEach(({ team, members }) => {
-      members.forEach((emp) => map.set(emp.id, team));
-    });
-    return map;
-  }, [distributedTeams]);
-
-  // Regime de escala efetivo do mês visualizado
-  const currentViewScaleType: ScaleType = monthlyScaleTypes[currentMonthKey] || settings.scaleType;
-
-  // 4. Modals state
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
-
   // 5. Stored schedules by month: key "YYYY-M" -> empId -> dayNumber -> boolean (true = Folga)
   // Carrega todas as escalas gravadas no banco de dados local
   const [monthlySchedules, setMonthlySchedules] = useState<
@@ -605,6 +520,160 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       console.error('Erro ao persistir escalas no banco local:', e);
     }
   }, [monthlySchedules, storageKeySchedules]);
+
+  // Escala e regime efetivo do mês visualizado
+  const currentMonthSchedule = monthlySchedules[currentMonthKey] || {};
+  const isCurrentMonthGenerated = Object.keys(currentMonthSchedule).length > 0;
+  const currentViewScaleType: ScaleType = monthlyScaleTypes[currentMonthKey] || settings.scaleType;
+
+  // Divisão de equipes respeitando a personalização flexível do usuário e ISOLAMENTO MENSAL RIGOROSO
+  // e garantindo com 100% de segurança que NENHUM colaborador apareça duplicado na tabela
+  const distributedTeams: { team: TeamConfig; members: Employee[] }[] = useMemo(() => {
+    const safeNumTeams = Math.max(1, Math.min(settings.numTeams, TEAMS.length));
+    const activeTeams = TEAMS.slice(0, safeNumTeams);
+
+    // Mapeia colaboradores únicos por ID e também previne colaboradores duplicados (mesmo nome ou matrícula)
+    const empById = new Map<string, Employee>();
+    const seenRegistrations = new Set<string>();
+    const seenNames = new Set<string>();
+    const uniqueCategoryEmployees: Employee[] = [];
+
+    categoryEmployees.forEach((emp) => {
+      const regKey = emp.registration?.trim().toUpperCase();
+      const nameKey = emp.name?.trim().toLowerCase();
+      if (regKey && seenRegistrations.has(regKey)) {
+        return;
+      }
+      if (nameKey && seenNames.has(nameKey)) {
+        return;
+      }
+      if (regKey) seenRegistrations.add(regKey);
+      if (nameKey) seenNames.add(nameKey);
+      empById.set(emp.id, emp);
+      uniqueCategoryEmployees.push(emp);
+    });
+
+    const globallyAssignedEmpIds = new Set<string>();
+
+    // 1. Obtém o mapeamento específico do mês visualizado
+    let activeAssignments = monthlyTeamAssignments[currentMonthKey];
+
+    // 2. RECUPERAÇÃO AUTOMÁTICA E PROTEÇÃO DE MESES PASSADOS:
+    // Se o mês já tem escala gerada (ex: Outubro), mas não tem mapeamento ou suas equipes estão
+    // desalinhadas com as folgas reais daquele mês, infere com precisão cirúrgica a partir das folgas
+    if (isCurrentMonthGenerated) {
+      let isMismatch = false;
+      if (!activeAssignments || Object.values(activeAssignments).every((list) => list.length === 0)) {
+        isMismatch = true;
+      } else {
+        // Valida se o primeiro membro da Equipe 0 tem folga no dia inicial esperado da Equipe 0
+        const sampleEmpId = activeAssignments[0]?.[0];
+        if (sampleEmpId && currentMonthSchedule[sampleEmpId]) {
+          const expectedOff = getInitialTeamOffDay(0, safeNumTeams, currentViewScaleType);
+          if (currentMonthSchedule[sampleEmpId][expectedOff] !== true) {
+            isMismatch = true;
+          }
+        }
+      }
+
+      if (isMismatch) {
+        activeAssignments = inferTeamsFromMonthSchedule(
+          currentMonthSchedule,
+          currentViewScaleType,
+          safeNumTeams,
+          uniqueCategoryEmployees
+        );
+      }
+    }
+
+    if (!activeAssignments || Object.values(activeAssignments).every((list) => list.length === 0)) {
+      activeAssignments = teamAssignments;
+    }
+
+    const result: { team: TeamConfig; members: Employee[] }[] = activeTeams.map((team) => {
+      const memberIds = activeAssignments[team.id] || [];
+      const members: Employee[] = [];
+      memberIds.forEach((id: string) => {
+        // Bloqueia se já tiver sido adicionado a qualquer equipe
+        if (!globallyAssignedEmpIds.has(id)) {
+          const emp = empById.get(id);
+          if (emp) {
+            globallyAssignedEmpIds.add(id);
+            members.push(emp);
+          }
+        }
+      });
+      return { team, members };
+    });
+
+    // Se houver algum colaborador recém-cadastrado ainda não alocado no state, distribui sem duplicar
+    const unassigned = uniqueCategoryEmployees.filter((emp) => !globallyAssignedEmpIds.has(emp.id));
+    if (unassigned.length > 0) {
+      unassigned.forEach((emp) => {
+        if (!globallyAssignedEmpIds.has(emp.id)) {
+          globallyAssignedEmpIds.add(emp.id);
+          let smallestTeamIdx = 0;
+          let smallestCount = Infinity;
+          result.forEach((t, idx) => {
+            if (t.members.length < smallestCount) {
+              smallestCount = t.members.length;
+              smallestTeamIdx = idx;
+            }
+          });
+          result[smallestTeamIdx].members.push(emp);
+        }
+      });
+    }
+
+    return result;
+  }, [categoryEmployees, settings.numTeams, teamAssignments, monthlyTeamAssignments, currentMonthKey, currentMonthSchedule, isCurrentMonthGenerated, currentViewScaleType]);
+
+  // Salva no banco de dados local a divisão de equipes restaurada para o mês se ainda não estava sincronizada
+  useEffect(() => {
+    if (isCurrentMonthGenerated) {
+      const existing = monthlyTeamAssignments[currentMonthKey];
+      let needsSave = false;
+      if (!existing || Object.values(existing).every((list) => list.length === 0)) {
+        needsSave = true;
+      } else {
+        const sampleEmpId = existing[0]?.[0];
+        if (sampleEmpId && currentMonthSchedule[sampleEmpId]) {
+          const expectedOff = getInitialTeamOffDay(0, settings.numTeams, currentViewScaleType);
+          if (currentMonthSchedule[sampleEmpId][expectedOff] !== true) {
+            needsSave = true;
+          }
+        }
+      }
+
+      if (needsSave) {
+        const restored = inferTeamsFromMonthSchedule(
+          currentMonthSchedule,
+          currentViewScaleType,
+          settings.numTeams,
+          categoryEmployees
+        );
+        setMonthlyTeamAssignments((prev) => ({
+          ...prev,
+          [currentMonthKey]: restored,
+        }));
+      }
+    }
+  }, [currentMonthKey, isCurrentMonthGenerated, currentMonthSchedule, currentViewScaleType, settings.numTeams, categoryEmployees, monthlyTeamAssignments]);
+
+  // Mapeamento rápido de colaborador -> equipe
+  const employeeTeamMap = useMemo(() => {
+    const map = new Map<string, TeamConfig>();
+    distributedTeams.forEach(({ team, members }) => {
+      members.forEach((emp) => map.set(emp.id, team));
+    });
+    return map;
+  }, [distributedTeams]);
+
+  // 4. Modals state
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // 6. Afastamentos (Férias e Atestados) - Carrega do banco local
   const [leaves, setLeaves] = useState<EmployeeLeave[]>(() => {
@@ -716,9 +785,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
-
-  const currentMonthSchedule = monthlySchedules[currentMonthKey] || {};
-  const isCurrentMonthGenerated = Object.keys(currentMonthSchedule).length > 0;
 
   // Days columns for currently viewed month
   const dateColumns = useMemo(() => {
@@ -903,46 +969,41 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       nextAssignments[targetTeamId].push(sourceEmpId);
     }
 
-    setTeamAssignments(nextAssignments);
     setMonthlyTeamAssignments((prev) => ({
       ...prev,
       [currentMonthKey]: nextAssignments,
     }));
 
-    // 3. Se mudou de equipe, reajusta as folgas automaticamente nos meses existentes
+    // 3. Se mudou de equipe, reajusta as folgas automaticamente APENAS no mês visualizado
     if (sourceTeamId !== targetTeamId) {
       const destTeam = TEAMS.find((t: TeamConfig) => t.id === targetTeamId) || TEAMS[targetTeamId];
 
       setMonthlySchedules((prev) => {
         const next = { ...prev };
+        const monthSchedule = { ...(next[currentMonthKey] || {}) };
+        const mScale = monthlyScaleTypes[currentMonthKey] || settings.scaleType;
 
-        Object.keys(next).forEach((monthKey) => {
-          const monthSchedule = { ...next[monthKey] };
-          const mScale = monthlyScaleTypes[monthKey] || settings.scaleType;
-
-          // Padrão de dias de folga da equipe de destino (sincronizado e puro)
-          const firstOff = getInitialTeamOffDay(
-            targetTeamId,
-            settings.numTeams,
-            mScale
-          );
-          const cycleLen =
-            mScale === '5x1' ? 6 : mScale === '5x2' ? 7 : mScale === '6x1' ? 7 : 2;
-          const destPattern: Record<number, boolean> = {};
-          for (let d = 1; d <= 31; d++) {
-            if (mScale === '5x2') {
-              destPattern[d] =
-                ((d - firstOff) % 7 + 7) % 7 === 0 ||
-                ((d - (firstOff + 1)) % 7 + 7) % 7 === 0;
-            } else {
-              destPattern[d] = ((d - firstOff) % cycleLen + cycleLen) % cycleLen === 0;
-            }
+        // Padrão de dias de folga da equipe de destino (sincronizado e puro)
+        const firstOff = getInitialTeamOffDay(
+          targetTeamId,
+          settings.numTeams,
+          mScale
+        );
+        const cycleLen =
+          mScale === '5x1' ? 6 : mScale === '5x2' ? 7 : mScale === '6x1' ? 7 : 2;
+        const destPattern: Record<number, boolean> = {};
+        for (let d = 1; d <= 31; d++) {
+          if (mScale === '5x2') {
+            destPattern[d] =
+              ((d - firstOff) % 7 + 7) % 7 === 0 ||
+              ((d - (firstOff + 1)) % 7 + 7) % 7 === 0;
+          } else {
+            destPattern[d] = ((d - firstOff) % cycleLen + cycleLen) % cycleLen === 0;
           }
+        }
 
-          monthSchedule[sourceEmpId] = destPattern;
-
-          next[monthKey] = monthSchedule;
-        });
+        monthSchedule[sourceEmpId] = destPattern;
+        next[currentMonthKey] = monthSchedule;
 
         return next;
       });
@@ -1112,12 +1173,24 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         customTeamOffDays: cfg.customTeamOffDays,
       });
 
-      // Salva alocação de equipes no mês de destino e atualiza o estado de equipes
+      // Salva alocação de equipes no mês de destino e garante que o mês anterior mantenha seu próprio mapeamento intacto
+      const updates: Record<string, Record<number, string[]>> = {
+        [targetKey]: reorganizedMap,
+      };
+
+      if (!monthlyTeamAssignments[pKey] && prevMonthData) {
+        updates[pKey] = inferTeamsFromMonthSchedule(
+          prevMonthData,
+          monthlyScaleTypes[pKey] || '5x1',
+          cfg.numTeams,
+          uniqueCategoryEmployees
+        );
+      }
+
       setMonthlyTeamAssignments((prev) => ({
         ...prev,
-        [targetKey]: reorganizedMap,
+        ...updates,
       }));
-      setTeamAssignments(reorganizedMap);
 
       const safeNumTeams = Math.max(1, Math.min(cfg.numTeams, TEAMS.length));
       activeTeamsForGeneration = TEAMS.slice(0, safeNumTeams).map((team) => {
@@ -1131,6 +1204,15 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       });
     } else {
       activeTeamsForGeneration = explicitTeams ?? distributedTeams;
+      const targetMap: Record<number, string[]> = {};
+      for (let i = 0; i < cfg.numTeams; i++) targetMap[i] = [];
+      activeTeamsForGeneration.forEach(({ team, members }) => {
+        targetMap[team.id] = members.map((m) => m.id);
+      });
+      setMonthlyTeamAssignments((prev) => ({
+        ...prev,
+        [targetKey]: targetMap,
+      }));
     }
 
     // Registra a escala utilizada para este mês
