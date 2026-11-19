@@ -82,9 +82,10 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
               Regime de Escala da Categoria
             </label>
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {[
                 { id: '5x1', label: '5x1', desc: '5 trab. / 1 folga' },
+                { id: '5x2', label: '5x2', desc: '5 trab. / 2 folgas' },
                 { id: '6x1', label: '6x1', desc: '6 trab. / 1 folga' },
                 { id: '12x36', label: '12x36', desc: '12h trab. / 36h folga' },
               ].map((item) => (

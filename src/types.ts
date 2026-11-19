@@ -1,6 +1,6 @@
 export type ShiftId = 'manha' | 'tarde' | 'noite';
 
-export type ScaleType = '5x1' | '6x1' | '12x36';
+export type ScaleType = '5x1' | '5x2' | '6x1' | '12x36';
 
 export type GenerationMode = 'nova' | 'continuidade';
 

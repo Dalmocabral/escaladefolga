@@ -112,6 +112,17 @@ export const getInitialTeamOffDay = (
     return (teamIdx % 6) + 1;
   }
 
+  if (scaleType === '5x2') {
+    // Escala 5x2: ciclo de 7 dias (5 trabalhados + 2 folgas consecutivas - uma atrás da outra)
+    // Folgas contínuas e sequenciais entre as equipes para maximizar a presença de colaboradores no trabalho:
+    // Equipe 0 (Verde) -> Folgas no Dia 1 e 2 (01-02, 08-09, 15-16, 22-23, 29-30)
+    // Equipe 1 (Azul) -> Folgas no Dia 2 e 3 (02-03, 09-10, 16-17, 23-24, 30)
+    // Equipe 2 (Amarela) -> Folgas no Dia 3 e 4 (03-04, 10-11, 17-18, 24-25)
+    // Equipe 3 (Vermelha) -> Folgas no Dia 4 e 5 (04-05, 11-12, 18-19, 25-26)
+    // Equipe 4 (Cinza) -> Folgas no Dia 5 e 6 (05-06, 12-13, 19-20, 26-27)
+    return (teamIdx % 7) + 1;
+  }
+
   if (scaleType === '6x1') {
     // Escala 6x1: ciclo de 7 dias (6 trabalhados + 1 folga)
     // Folgas contínuas e sequenciais entre as equipes:
@@ -136,7 +147,7 @@ const buildInitialNovemberSchedule = (
   const catEmployees = employees.filter(
     (e) => e.shiftId === shiftId && e.role.toLowerCase() === roleName.toLowerCase()
   );
-  const cycleLen = scaleType === '5x1' ? 6 : scaleType === '6x1' ? 7 : 2;
+  const cycleLen = scaleType === '5x1' ? 6 : scaleType === '5x2' ? 7 : scaleType === '6x1' ? 7 : 2;
 
   // Domingos em Novembro de 2026: 01, 08, 15, 22, 29 (5 domingos)
   const novSundays = [1, 8, 15, 22, 29];
@@ -162,22 +173,31 @@ const buildInitialNovemberSchedule = (
     memberIds.forEach((empId) => {
       const daysOff: Record<number, boolean> = {};
       for (let d = 1; d <= 30; d++) {
-        daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+        if (scaleType === '5x2') {
+          // Em 5x2: 2 folgas consecutivas (uma atrás da outra)
+          daysOff[d] =
+            ((d - firstOffDay) % 7 + 7) % 7 === 0 ||
+            ((d - (firstOffDay + 1)) % 7 + 7) % 7 === 0;
+        } else {
+          daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+        }
       }
       schedule[empId] = daysOff;
     });
 
-    // Distribuição de folga compensatória para quem ficou com 0 domingos
-    const zeroSundayEmpIds = memberIds.filter((empId) => {
-      const offs = schedule[empId] || {};
-      return novSundays.filter((s) => offs[s] === true).length === 0;
-    });
-
-    if (zeroSundayEmpIds.length > 0) {
-      zeroSundayEmpIds.forEach((empId, idx) => {
-        const targetSunday = novSundays[idx % numNovSundays];
-        schedule[empId][targetSunday] = true;
+    // Distribuição de folga compensatória dominical em 5x1/6x1 para quem ficou com 0 domingos
+    if (scaleType !== '5x2') {
+      const zeroSundayEmpIds = memberIds.filter((empId) => {
+        const offs = schedule[empId] || {};
+        return novSundays.filter((s) => offs[s] === true).length === 0;
       });
+
+      if (zeroSundayEmpIds.length > 0) {
+        zeroSundayEmpIds.forEach((empId, idx) => {
+          const targetSunday = novSundays[idx % numNovSundays];
+          schedule[empId][targetSunday] = true;
+        });
+      }
     }
   });
 
@@ -194,10 +214,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   onReorderEmployees,
 }) => {
   // Chaves do banco de dados local (localStorage) por turno e setor
-  const storageKeySchedules = `escala_db_schedules_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeySettings = `escala_db_settings_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeyLeaves = `escala_db_leaves_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
-  const storageKeyTeamAssignments = `escala_db_team_assignments_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeySchedules = `escala_db_schedules_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeySettings = `escala_db_settings_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyLeaves = `escala_db_leaves_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
+  const storageKeyTeamAssignments = `escala_db_team_assignments_v3_${shift.id}_${roleName.replace(/\s+/g, '_')}`;
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -207,6 +227,10 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       (emp) => emp.shiftId === shift.id && emp.role.toLowerCase() === roleName.toLowerCase()
     );
   }, [employees, shift.id, roleName]);
+
+  const isMotorista = roleName.toLowerCase() === 'motorista';
+  const defaultScaleType: ScaleType = isMotorista ? '5x2' : '5x1';
+  const defaultNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
 
   // 1. Settings state (carrega do banco local ou inicia padrão)
   const [settings, setSettings] = useState<CategoryScheduleSettings>(() => {
@@ -229,8 +253,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       console.error('Erro ao ler configurações do banco local:', e);
     }
     return {
-      scaleType: '5x1',
-      numTeams: categoryEmployees.length >= 20 ? 5 : 3,
+      scaleType: defaultScaleType,
+      numTeams: defaultNumTeams,
     };
   });
 
@@ -367,7 +391,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           const y = Number(yStr);
           const m = Number(mStr);
           const daysInM = new Date(y, m + 1, 0).getDate();
-          const cycleLen = settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+          const cycleLen =
+            settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
 
           for (const [tIdStr, newEmpIds] of Object.entries(newAssignmentsPerTeam)) {
             const teamId = Number(tIdStr);
@@ -392,7 +417,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               if (!monthSchedule[empId]) {
                 const empDays: Record<number, boolean> = {};
                 for (let d = 1; d <= daysInM; d++) {
-                  empDays[d] = ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                  if (settings.scaleType === '5x2') {
+                    empDays[d] =
+                      ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
+                      ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
+                  } else {
+                    empDays[d] = ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                  }
                 }
 
                 // Verifica se tem domingo
@@ -561,13 +592,14 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     } catch {}
 
     const initialNumTeams = categoryEmployees.length >= 20 ? 5 : 3;
+    const initialScale: ScaleType = roleName.toLowerCase() === 'motorista' ? '5x2' : '5x1';
     return {
       '2026-10': buildInitialNovemberSchedule(
         employees,
         shift.id,
         roleName,
         initialNumTeams,
-        '5x1',
+        initialScale,
         savedAssignments
       ),
     };
@@ -588,13 +620,48 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       const saved = localStorage.getItem(storageKeyLeaves);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed;
         }
       }
     } catch (e) {
       console.error('Erro ao ler afastamentos do banco local:', e);
     }
+
+    if (roleName.toLowerCase() === 'motorista') {
+      const motEmployees = employees.filter(
+        (e) => e.shiftId === shift.id && e.role.toLowerCase() === 'motorista'
+      );
+      if (motEmployees.length >= 3) {
+        return [
+          {
+            id: 'leave-mot-1',
+            employeeId: motEmployees[0].id,
+            type: 'FERIAS',
+            startDate: '2026-11-01',
+            endDate: '2026-11-15',
+            observation: 'Férias programadas (15 dias)',
+          },
+          {
+            id: 'leave-mot-2',
+            employeeId: motEmployees[Math.min(8, motEmployees.length - 1)].id,
+            type: 'FERIAS',
+            startDate: '2026-11-05',
+            endDate: '2026-11-19',
+            observation: 'Férias programadas (15 dias)',
+          },
+          {
+            id: 'leave-mot-3',
+            employeeId: motEmployees[Math.min(16, motEmployees.length - 1)].id,
+            type: 'FERIAS',
+            startDate: '2026-11-10',
+            endDate: '2026-11-24',
+            observation: 'Férias programadas (15 dias)',
+          },
+        ];
+      }
+    }
+
     if (shift.id === 'manha' && roleName.toLowerCase() === 'operador de bloco') {
       return [
         {
@@ -831,10 +898,16 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             settings.scaleType
           );
           const cycleLen =
-            settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+            settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
           const destPattern: Record<number, boolean> = {};
           for (let d = 1; d <= 31; d++) {
-            destPattern[d] = ((d - firstOff) % cycleLen + cycleLen) % cycleLen === 0;
+            if (settings.scaleType === '5x2') {
+              destPattern[d] =
+                ((d - firstOff) % 7 + 7) % 7 === 0 ||
+                ((d - (firstOff + 1)) % 7 + 7) % 7 === 0;
+            } else {
+              destPattern[d] = ((d - firstOff) % cycleLen + cycleLen) % cycleLen === 0;
+            }
           }
 
           monthSchedule[sourceEmpId] = destPattern;
@@ -951,7 +1024,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     // USA AS EQUIPES COM A QUANTIDADE ATUAL (OU EXPLICITAMENTE PASSADAS)
     const teams = explicitTeams ?? distributedTeams;
     const newMonthData: Record<string, Record<number, boolean>> = {};
-    const cycleLen = cfg.scaleType === '5x1' ? 6 : cfg.scaleType === '6x1' ? 7 : 2;
+    const cycleLen = cfg.scaleType === '5x1' ? 6 : cfg.scaleType === '5x2' ? 7 : cfg.scaleType === '6x1' ? 7 : 2;
 
     teams.forEach(({ team, members }) => {
       if (members.length === 0) return;
@@ -989,6 +1062,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           if (cfg.scaleType === '5x1') {
             const workedMod = bestWorked % 6;
             teamFirstOffDay = workedMod === 5 ? 1 : (6 - workedMod);
+          } else if (cfg.scaleType === '5x2') {
+            const workedMod = bestWorked % 7;
+            teamFirstOffDay = workedMod >= 5 ? 1 : (5 - workedMod + 1);
           } else if (cfg.scaleType === '6x1') {
             const workedMod = bestWorked % 7;
             teamFirstOffDay = workedMod === 6 ? 1 : (7 - workedMod);
@@ -1002,8 +1078,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       members.forEach((emp) => {
         const empDays: Record<number, boolean> = {};
         for (let d = 1; d <= daysInTarget; d++) {
-          const isOff = ((d - teamFirstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
-          empDays[d] = isOff;
+          if (cfg.scaleType === '5x2') {
+            empDays[d] =
+              ((d - teamFirstOffDay) % 7 + 7) % 7 === 0 ||
+              ((d - (teamFirstOffDay + 1)) % 7 + 7) % 7 === 0;
+          } else {
+            empDays[d] = ((d - teamFirstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+          }
         }
         newMonthData[emp.id] = empDays;
       });
@@ -1012,7 +1093,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     // FOLGA COMPENSATÓRIA DE DOMINGO (1 DOMINGO POR MÊS - LEGISLAÇÃO / CLT)
     // Se o administrador optou por 'auto', distribui equilibradamente quem ficou com 0 domingos
     // Exemplo: 5 colaboradores em 4 domingos = 2, 1, 1, 1; em 5 domingos = 1, 1, 1, 1, 1
-    if (compensatorySunday === 'auto') {
+    if (compensatorySunday === 'auto' && cfg.scaleType !== '5x2') {
       const sundays: number[] = [];
       for (let d = 1; d <= daysInTarget; d++) {
         const date = new Date(targetYear, targetMonth, d);
@@ -1381,11 +1462,17 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                           settings.scaleType
                         );
                         const cycleLen =
-                          settings.scaleType === '5x1' ? 6 : settings.scaleType === '6x1' ? 7 : 2;
+                          settings.scaleType === '5x1' ? 6 : settings.scaleType === '5x2' ? 7 : settings.scaleType === '6x1' ? 7 : 2;
                         const fallbackDays: Record<number, boolean> = {};
                         for (let d = 1; d <= dateColumns.length; d++) {
-                          fallbackDays[d] =
-                            ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                          if (settings.scaleType === '5x2') {
+                            fallbackDays[d] =
+                              ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
+                              ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
+                          } else {
+                            fallbackDays[d] =
+                              ((d - teamFirstOff) % cycleLen + cycleLen) % cycleLen === 0;
+                          }
                         }
                         empOffs = fallbackDays;
                       } else if (!empOffs) {
