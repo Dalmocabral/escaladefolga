@@ -22,7 +22,7 @@ interface GenerateFolgaModalProps {
   currentViewMonth: number;
   currentViewYear: number;
   scaleType: ScaleType;
-  monthlySchedules: Record<string, Record<string, Record<number, boolean>>>;
+  monthlySchedules: Record<string, Record<string, Record<number, boolean | string>>>;
   onConfirm: (options: GenerateFolgaOptions) => void;
 }
 

@@ -32,7 +32,7 @@ export async function exportScheduleToExcel(params: {
   year: number;
   dateColumns: DayColumnData[];
   distributedTeams: { team: TeamConfig; members: Employee[] }[];
-  schedule: Record<string, Record<number, boolean>>;
+  schedule: Record<string, Record<number, boolean | string>>;
   leaves: EmployeeLeave[];
   scaleType: string;
 }) {
@@ -185,20 +185,72 @@ export async function exportScheduleToExcel(params: {
           };
           dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF000000' } };
         } else {
-          const isOff = empOffs[col.dayNumber] === true;
+          const rawVal = empOffs[col.dayNumber];
+          const isOff = rawVal === true || rawVal === 'FOLGA';
 
-          // Se for Folga: preenche com a cor da equipe e escreve "Folga"
-          // Se for Trabalho: preenche com a cor da equipe sem texto
-          dayCell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: teamColor.fillArgb },
-          };
-
-          if (isOff) {
+          if (rawVal === 'FOLGA_FERIADO') {
+            dayCell.value = 'F. Feriado';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFF2CC' }, // Amarelo suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF7F6000' } };
+          } else if (rawVal === 'TREINAMENTO') {
+            dayCell.value = 'Treinamento';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE8EAF6' }, // Indigo suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF1A237E' } };
+          } else if (rawVal === 'DISPENSA') {
+            dayCell.value = 'Dispensa';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFE0B2' }, // Laranja suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFE65100' } };
+          } else if (rawVal === 'INSS') {
+            dayCell.value = 'INSS';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFF9C4' }, // Âmbar suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFF57F17' } };
+          } else if (rawVal === 'EXAME') {
+            dayCell.value = 'Exame';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE0F2F1' }, // Teal suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF004D40' } };
+          } else if (rawVal === 'PERIODICO') {
+            dayCell.value = 'Periódico';
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE0F7FA' }, // Ciano suave
+            };
+            dayCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF006064' } };
+          } else if (isOff) {
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: teamColor.fillArgb },
+            };
             dayCell.value = 'Folga';
             dayCell.font = { name: 'Calibri', size: 9, bold: false, color: { argb: 'FF000000' } };
           } else {
+            // Trabalho: cor da equipe sem texto
+            dayCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: teamColor.fillArgb },
+            };
             dayCell.value = '';
           }
         }

@@ -157,7 +157,7 @@ export function distributeEmployeesToTeams<T>(items: T[], numTeams: number) {
 
 export interface ReorganizeTeamsOptions {
   employees: Employee[];
-  prevMonthSchedule: Record<string, Record<number, boolean>>;
+  prevMonthSchedule: Record<string, Record<number, boolean | string>>;
   prevMonthTotalDays: number;
   targetScaleType: ScaleType;
   numTeams: number;
@@ -268,7 +268,7 @@ export function reorganizeTeamsForScaleTransition({
  * exatamente nas equipes com as quais a escala daquele mês foi originalmente gerada.
  */
 export function inferTeamsFromMonthSchedule(
-  schedule: Record<string, Record<number, boolean>>,
+  schedule: Record<string, Record<number, boolean | string>>,
   scaleType: ScaleType,
   numTeams: number,
   employees: Employee[]
@@ -343,7 +343,7 @@ export interface TeamContinuityResult {
  * - Se trabalhou W dias no final do mês anterior, trabalha 5 - W dias e folga no dia 6 - W!
  */
 export function computeTeamContinuityOffDays(
-  prevMonthSchedule: Record<string, Record<number, boolean>>,
+  prevMonthSchedule: Record<string, Record<number, boolean | string>>,
   memberIds: string[],
   prevTotalDays: number,
   targetScaleType: ScaleType,
@@ -360,12 +360,15 @@ export function computeTeamContinuityOffDays(
 
   membersWithHistory.forEach((id) => {
     const offs = prevMonthSchedule[id] || {};
-    if (offs[prevTotalDays] === true) lastDayOffCount++;
-    if (offs[prevTotalDays - 1] === true) secondLastDayOffCount++;
+    const isLastOff = Boolean(offs[prevTotalDays]) && offs[prevTotalDays] !== 'TRABALHO';
+    const isSecondLastOff = Boolean(offs[prevTotalDays - 1]) && offs[prevTotalDays - 1] !== 'TRABALHO';
+    if (isLastOff) lastDayOffCount++;
+    if (isSecondLastOff) secondLastDayOffCount++;
 
     let w = 0;
     for (let d = prevTotalDays; d >= 1; d--) {
-      if (offs[d] === true) break;
+      const isOff = Boolean(offs[d]) && offs[d] !== 'TRABALHO';
+      if (isOff) break;
       w++;
     }
     workedCounts.push(w);

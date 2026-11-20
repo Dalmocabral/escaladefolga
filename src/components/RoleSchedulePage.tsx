@@ -23,6 +23,12 @@ import { MONTH_NAMES, DAY_NAMES } from '../constants';
 import { MetricsPanel } from './schedule/MetricsPanel';
 import { VacationList } from './schedule/VacationList';
 import { EmployeeContextMenu } from './schedule/EmployeeContextMenu';
+import {
+  CellStatusMenu,
+  type CellMenuAnchor,
+  type CellOptionKey,
+  CELL_STATUS_CONFIG,
+} from './schedule/CellStatusMenu';
 import { RoleScheduleConfigModal } from './RoleScheduleConfigModal';
 import { GenerateFolgaModal } from './GenerateFolgaModal';
 import { LeaveModal } from './LeaveModal';
@@ -191,6 +197,18 @@ const buildInitialSchedule = (
   });
 
   return schedule;
+};
+
+export const getDayStatus = (val: boolean | string | undefined): CellOptionKey => {
+  if (!val || val === 'TRABALHO') return 'TRABALHO';
+  if (val === true || val === 'FOLGA') return 'FOLGA';
+  if (val === 'FOLGA_FERIADO') return 'FOLGA_FERIADO';
+  if (val === 'TREINAMENTO') return 'TREINAMENTO';
+  if (val === 'DISPENSA') return 'DISPENSA';
+  if (val === 'INSS') return 'INSS';
+  if (val === 'EXAME') return 'EXAME';
+  if (val === 'PERIODICO') return 'PERIODICO';
+  return 'FOLGA';
 };
 
 export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
@@ -509,7 +527,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   // 5. Stored schedules by month: key "YYYY-M" -> empId -> dayNumber -> boolean (true = Folga)
   // Carrega todas as escalas gravadas no banco de dados local
   const [monthlySchedules, setMonthlySchedules] = useState<
-    Record<string, Record<string, Record<number, boolean>>>
+    Record<string, Record<string, Record<number, boolean | string>>>
   >(() => {
     try {
       const saved = localStorage.getItem(storageKeySchedules);
@@ -759,20 +777,24 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     left: number;
   } | null>(null);
 
+  // Cell popover menu anchor state
+  const [cellMenuAnchor, setCellMenuAnchor] = useState<CellMenuAnchor | null>(null);
+
   // Leave Modal state
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [selectedEmpForLeave, setSelectedEmpForLeave] = useState<Employee | null>(null);
   const [selectedLeaveType, setSelectedLeaveType] = useState<LeaveType>('FERIAS');
   const [selectedExistingLeave, setSelectedExistingLeave] = useState<EmployeeLeave | null>(null);
 
-  // Fecha o menu flutuante ao rolar a página ou tabela
+  // Fecha os menus flutuantes ao rolar a página ou tabela
   useEffect(() => {
     const handleScroll = () => {
       if (menuAnchor) setMenuAnchor(null);
+      if (cellMenuAnchor) setCellMenuAnchor(null);
     };
     window.addEventListener('scroll', handleScroll, true);
     return () => window.removeEventListener('scroll', handleScroll, true);
-  }, [menuAnchor]);
+  }, [menuAnchor, cellMenuAnchor]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -803,42 +825,59 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
   };
 
-  // Toggle cell directly in currently viewed month (Configuração Manual Célula a Célula)
-  const handleToggleCell = (empId: string, dayNumber: number) => {
-    const dateCol = dateColumns.find((c) => c.dayNumber === dayNumber);
-    // 1. Verifica se o colaborador tem QUALQUER afastamento ativo nesta data específica
-    const activeLeave = leaves.find(
-      (l) =>
-        l.employeeId === empId &&
-        dateCol &&
-        dateCol.fullDate >= l.startDate &&
-        dateCol.fullDate <= l.endDate
-    );
-    if (activeLeave && dateCol) {
-      const emp = categoryEmployees.find((e) => e.id === empId);
-      let leaveTypeStr = 'Férias';
-      if (activeLeave.type === 'ATESTADO') leaveTypeStr = 'Atestado Médico';
-      else if (activeLeave.type === 'INSS') leaveTypeStr = 'Afastamento INSS';
-      else if (activeLeave.type === 'EXAME') leaveTypeStr = 'Exame Periódico';
+  // Abre o menu de opções da célula ao clicar no quadradinho
+  const handleOpenCellMenu = (
+    e: React.MouseEvent,
+    emp: Employee,
+    dayNumber: number,
+    dd: string
+  ) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuHeight = 310;
+    const menuWidth = 260;
+    const openUpwards = rect.bottom + menuHeight > window.innerHeight;
+    const top = openUpwards ? Math.max(10, rect.top - menuHeight) : rect.bottom + 4;
+    const left = Math.min(Math.max(10, rect.left - 40), window.innerWidth - menuWidth - 20);
 
-      showToast(
-        `📌 ${emp?.name || 'Colaborador'} está em período de ${leaveTypeStr} neste dia. Clique no nome dele para editar ou remover o afastamento.`
-      );
-      return;
-    }
+    const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+    const offs = getEmployeeOffsMap(emp.id, team.id);
+    const currentStatus = getDayStatus(offs[dayNumber]);
+
+    setCellMenuAnchor({
+      employee: emp,
+      dayNumber,
+      dateKey: `${dd}/${String(viewMonth + 1).padStart(2, '0')}`,
+      currentStatus,
+      top,
+      left,
+    });
+  };
+
+  // Aplica o status selecionado para a célula
+  const handleSelectCellStatus = (
+    empId: string,
+    dayNumber: number,
+    option: CellOptionKey
+  ) => {
+    const emp = categoryEmployees.find((e) => e.id === empId);
+    const dateCol = dateColumns.find((c) => c.dayNumber === dayNumber);
+    const dateStr = dateCol
+      ? `${dateCol.dd}/${String(viewMonth + 1).padStart(2, '0')}`
+      : `${dayNumber}`;
 
     setMonthlySchedules((prev) => {
       const monthData = prev[currentMonthKey] || {};
       const empOff = monthData[empId] || {};
-      const isCurrentlyOff = empOff[dayNumber] ?? false;
-      const willBeOff = !isCurrentlyOff;
 
-      const emp = categoryEmployees.find((e) => e.id === empId);
-      showToast(
-        willBeOff
-          ? `⚪ Folga manual aplicada: ${emp?.name || 'Colaborador'} no dia ${String(dayNumber).padStart(2, '0')}/${String(viewMonth + 1).padStart(2, '0')}.`
-          : `🟩 Trabalho manual definido: ${emp?.name || 'Colaborador'} no dia ${String(dayNumber).padStart(2, '0')}/${String(viewMonth + 1).padStart(2, '0')}.`
-      );
+      let nextVal: boolean | string;
+      if (option === 'TRABALHO') {
+        nextVal = false;
+      } else if (option === 'FOLGA') {
+        nextVal = true;
+      } else {
+        nextVal = option;
+      }
 
       return {
         ...prev,
@@ -846,11 +885,18 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           ...monthData,
           [empId]: {
             ...empOff,
-            [dayNumber]: willBeOff,
+            [dayNumber]: nextVal,
           },
         },
       };
     });
+
+    const cfg = CELL_STATUS_CONFIG[option];
+    showToast(
+      option === 'TRABALHO'
+        ? `🟩 Trabalho definido: ${emp?.name || 'Colaborador'} no dia ${dateStr}.`
+        : `${cfg.emoji} ${cfg.label} definido: ${emp?.name || 'Colaborador'} no dia ${dateStr}.`
+    );
   };
 
   // Open menu on click at employee name
@@ -1447,7 +1493,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   };
 
   // Obtém as folgas de um colaborador (respeitando escalas salvas ou fallback)
-  const getEmployeeOffsMap = (empId: string, teamId: number): Record<number, boolean> => {
+  const getEmployeeOffsMap = (empId: string, teamId: number): Record<number, boolean | string> => {
     const empOffs = currentMonthSchedule[empId];
     if (empOffs) return empOffs;
     if (isCurrentMonthGenerated) return {};
@@ -1565,42 +1611,52 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
   }, [categoryEmployees, leaves, selectedDateStr]);
   const totalAtestadoHoje = atestadoTodayList.length;
 
-  // 3. Total INSS no Dia Atual
+  // 3. Total INSS no Dia Atual (inclui afastamentos gerais e marcação direta na célula)
   const inssTodayList = useMemo(() => {
-    return categoryEmployees.filter((emp) =>
-      leaves.some(
+    return categoryEmployees.filter((emp) => {
+      const hasLeave = leaves.some(
         (l) =>
           l.employeeId === emp.id &&
           l.type === 'INSS' &&
           selectedDateStr >= l.startDate &&
           selectedDateStr <= l.endDate
-      )
-    );
-  }, [categoryEmployees, leaves, selectedDateStr]);
+      );
+      if (hasLeave) return true;
+      const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+      const offs = getEmployeeOffsMap(emp.id, team.id);
+      return offs[selectedDayForMetrics] === 'INSS';
+    });
+  }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
   const totalINSSHoje = inssTodayList.length;
 
-  // 4. Total Exame no Dia Atual
+  // 4. Total Exame no Dia Atual (inclui Exame clínico e Periódico)
   const exameTodayList = useMemo(() => {
-    return categoryEmployees.filter((emp) =>
-      leaves.some(
+    return categoryEmployees.filter((emp) => {
+      const hasLeave = leaves.some(
         (l) =>
           l.employeeId === emp.id &&
           l.type === 'EXAME' &&
           selectedDateStr >= l.startDate &&
           selectedDateStr <= l.endDate
-      )
-    );
-  }, [categoryEmployees, leaves, selectedDateStr]);
+      );
+      if (hasLeave) return true;
+      const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+      const offs = getEmployeeOffsMap(emp.id, team.id);
+      const val = offs[selectedDayForMetrics];
+      return val === 'EXAME' || val === 'PERIODICO';
+    });
+  }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
   const totalExameHoje = exameTodayList.length;
 
-  // 5. Total de Folga no Dia Atual (colaboradores de folga programada pela escala hoje, sem afastamento)
+  // 5. Total de Folga no Dia Atual (inclui Folga normal, Folga Feriado e Dispensa)
   const folgaTodayList = useMemo(() => {
     return categoryEmployees.filter((emp) => {
       const hasLeave = getDayLeave(emp.id, selectedDateStr);
       if (hasLeave) return false;
       const team = employeeTeamMap.get(emp.id) || TEAMS[0];
       const offs = getEmployeeOffsMap(emp.id, team.id);
-      return offs[selectedDayForMetrics] === true;
+      const val = offs[selectedDayForMetrics];
+      return val === true || val === 'FOLGA' || val === 'FOLGA_FERIADO' || val === 'DISPENSA';
     });
   }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
   const totalFolgaHoje = folgaTodayList.length;
@@ -1612,7 +1668,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       if (hasLeave) return false;
       const team = employeeTeamMap.get(emp.id) || TEAMS[0];
       const offs = getEmployeeOffsMap(emp.id, team.id);
-      return offs[selectedDayForMetrics] !== true;
+      const val = offs[selectedDayForMetrics];
+      return !val || val === 'TRABALHO';
     });
   }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
   const totalAtivosHoje = ativosTodayList.length;
@@ -1995,7 +2052,8 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                       const sundayOffsCount = dateColumns.filter((c) => {
                         const dayLeave = getDayLeave(emp.id, c.fullDate);
                         if (dayLeave) return false;
-                        return c.isSunday && empOffs[c.dayNumber] === true;
+                        const status = getDayStatus(empOffs[c.dayNumber]);
+                        return c.isSunday && (status === 'FOLGA' || status === 'FOLGA_FERIADO');
                       }).length;
 
                       const isBeingDragged = draggedEmpId === emp.id;
@@ -2102,10 +2160,11 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                             </div>
                           </td>
 
-                          {/* Células de Datas (com suporte a Férias, Atestado, INSS e Exame) */}
+                          {/* Células de Datas (com suporte a Folga, Folga Feriado, Treinamento, Dispensa, INSS, Exame, Periódico) */}
                           {dateColumns.map((col) => {
                             const dayLeave = getDayLeave(emp.id, col.fullDate);
-                            const isOff = empOffs[col.dayNumber] === true;
+                            const cellVal = empOffs[col.dayNumber];
+                            const cellStatus = getDayStatus(cellVal);
                             const isTodayCol =
                               col.dayNumber === todayDay &&
                               viewMonth === todayMonth &&
@@ -2115,7 +2174,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                             return (
                               <td
                                 key={col.dayNumber}
-                                onClick={() => handleToggleCell(emp.id, col.dayNumber)}
+                                onClick={(e) => handleOpenCellMenu(e, emp, col.dayNumber, col.dd)}
                                 className={`border-r border-slate-200/80 p-1 text-center cursor-pointer select-none transition-all active:scale-95 ${
                                   isTodayCol
                                     ? 'bg-blue-50/50'
@@ -2123,19 +2182,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                     ? 'bg-blue-50/20'
                                     : ''
                                 }`}
-                                title={`${emp.name} - ${col.dd}/${String(viewMonth + 1).padStart(2, '0')}: ${
-                                  dayLeave
-                                    ? dayLeave.type === 'FERIAS'
-                                      ? 'Férias'
-                                      : dayLeave.type === 'ATESTADO'
-                                      ? 'Atestado Médico'
-                                      : dayLeave.type === 'INSS'
-                                      ? 'Afastamento INSS'
-                                      : 'Exame Periódico'
-                                    : isOff
-                                    ? 'Folga'
-                                    : 'Trabalho'
-                                }`}
+                                title={`${emp.name} - ${col.dd}/${String(viewMonth + 1).padStart(2, '0')}: Clique para escolher (Folga, Folga Feriado, Treinamento, Dispensa, INSS, Exame, Periódico)`}
                               >
                                 {dayLeave ? (
                                   /* Afastamento: Férias, Atestado, INSS ou Exame */
@@ -2158,10 +2205,40 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                       ? 'INSS'
                                       : 'Exame'}
                                   </div>
-                                ) : isOff ? (
+                                ) : cellStatus === 'FOLGA' ? (
                                   /* Folga: Card branco nítido com borda suave */
                                   <div className="w-full h-7 rounded-md bg-white border border-slate-300 text-slate-800 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-slate-100">
                                     Folga
+                                  </div>
+                                ) : cellStatus === 'FOLGA_FERIADO' ? (
+                                  /* Folga Feriado */
+                                  <div className="w-full h-7 rounded-md bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-amber-200" title="Folga Feriado">
+                                    F. Feriado
+                                  </div>
+                                ) : cellStatus === 'TREINAMENTO' ? (
+                                  /* Treinamento */
+                                  <div className="w-full h-7 rounded-md bg-indigo-100 border border-indigo-300 text-indigo-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-indigo-200" title="Treinamento">
+                                    Treinam.
+                                  </div>
+                                ) : cellStatus === 'DISPENSA' ? (
+                                  /* Dispensa */
+                                  <div className="w-full h-7 rounded-md bg-orange-100 border border-orange-300 text-orange-950 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-orange-200" title="Dispensa">
+                                    Dispensa
+                                  </div>
+                                ) : cellStatus === 'INSS' ? (
+                                  /* INSS */
+                                  <div className="w-full h-7 rounded-md bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-amber-200" title="INSS">
+                                    INSS
+                                  </div>
+                                ) : cellStatus === 'EXAME' ? (
+                                  /* Exame */
+                                  <div className="w-full h-7 rounded-md bg-teal-100 border border-teal-300 text-teal-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-teal-200" title="Exame Clínico">
+                                    Exame
+                                  </div>
+                                ) : cellStatus === 'PERIODICO' ? (
+                                  /* Periodico */
+                                  <div className="w-full h-7 rounded-md bg-cyan-100 border border-cyan-300 text-cyan-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-cyan-200" title="Exame Periódico">
+                                    Periódico
                                   </div>
                                 ) : (
                                   /* Trabalho: Bloco sólido e arredondado na cor da equipe */
@@ -2282,6 +2359,13 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
             setMenuAnchor(null);
           }}
           onMoveToTeam={handleMoveToTeam}
+        />
+
+        {/* Menu de Seleção de Status da Célula */}
+        <CellStatusMenu
+          anchor={cellMenuAnchor}
+          onClose={() => setCellMenuAnchor(null)}
+          onSelectOption={handleSelectCellStatus}
         />
 
         {/* Toast Notification */}

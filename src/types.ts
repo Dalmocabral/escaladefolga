@@ -34,6 +34,8 @@ export interface Employee {
   shiftId: ShiftId;
 }
 
+export type DayScheduleValue = boolean | string;
+
 export interface CategoryScheduleSettings {
   scaleType: ScaleType;
   numTeams: number;
