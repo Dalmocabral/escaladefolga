@@ -474,26 +474,27 @@ export function buildTeamMonthOffDays(
 }
 
 /**
- * Pares de folgas consecutivas na semana para a Escala 5x2
- * 0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado
+ * Pares de folgas semanais consecutivas para a Escala 5x2 (0 = Domingo, 1 = Segunda, ..., 6 = Sábado)
  */
 export const ROTATION_PAIRS_5X2: [number, number][] = [
-  [0, 1], // Par 0: Domingo e Segunda
-  [1, 2], // Par 1: Segunda e Terça
-  [2, 3], // Par 2: Terça e Quarta
-  [3, 4], // Par 3: Quarta e Quinta
-  [4, 5], // Par 4: Quinta e Sexta
-  [5, 6], // Par 5: Sexta e Sábado
-  [6, 0], // Par 6: Sábado e Domingo
+  [1, 2], // Par 0: Segunda e Terça
+  [2, 3], // Par 1: Terça e Quarta
+  [3, 4], // Par 2: Quarta e Quinta
+  [4, 5], // Par 3: Quinta e Sexta
+  [5, 6], // Par 4: Sexta e Sábado
+  [6, 0], // Par 5: Sábado e Domingo
+  [0, 1], // Par 6: Domingo e Segunda
 ];
 
 /**
  * Determina se a equipe está de folga em uma data específica no regime contínuo 5x2 com 7 equipes.
- * Ancorado com sincronização contínua perfeita:
- * - A cada dia do ano, RIGOROSAMENTE 2 equipes folgam e 5 equipes trabalham.
- * - Toda equipe trabalha rigorosamente 5 dias consecutivos e folga rigorosamente 2 dias consecutivos.
- * - Duas equipes NUNCA folgam os dois dias juntas (cruzam apenas em 1 dia como entrada/saída).
- * - Sincronizado para que a Equipe Verde folgue Seg 02 e Ter 03 de Novembro de 2026.
+ * Aplica o Modelo A (Escala Corrida com Rotação Mensal de Equipes):
+ * - A cada mês, cada equipe rotaciona e muda de par de folga (garantindo que todas passem pelos fins de semana).
+ * - Em Novembro/2026: Equipe Verde folga Seg/Ter.
+ * - Em Dezembro/2026: Equipe Verde avança para Ter/Qua.
+ * - Em Janeiro/2027: Equipe Verde avança para Qua/Qui.
+ * - Em todos os dias do ano, rigorosamente 2 equipes folgam e 5 equipes trabalham.
+ * - Todos os membros da mesma equipe recebem 100% a mesma escala.
  */
 export function isTeamOff5x2Continuous(
   year: number,
@@ -501,11 +502,12 @@ export function isTeamOff5x2Continuous(
   day: number,
   teamId: number
 ): boolean {
-  const d = new Date(Date.UTC(year, month, day));
-  const anchor = new Date(Date.UTC(2026, 10, 1));
-  const diffDays = Math.round((d.getTime() - anchor.getTime()) / 86400000);
-  const mod = (((diffDays - teamId + 6) % 7) + 7) % 7;
-  return mod === 0 || mod === 1;
+  // Deslocamento mensal ancorado em Novembro/2026 (year=2026, month=10)
+  const monthIndex = (year * 12 + month) - (2026 * 12 + 10);
+  const pairIdx = (((teamId + monthIndex) % 7) + 7) % 7;
+  const pair = ROTATION_PAIRS_5X2[pairIdx];
+  const dow = new Date(year, month, day).getDay();
+  return pair[0] === dow || pair[1] === dow;
 }
 
 /**

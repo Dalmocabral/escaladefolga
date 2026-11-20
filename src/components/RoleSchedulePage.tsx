@@ -669,6 +669,24 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           if (teamHasAnomaly) break;
         }
 
+        // Também verifica se a escala da equipe corresponde à rotação mensal corrida (Modelo A)
+        if (!teamHasAnomaly && settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
+          const sampleDays = updatedMonthData[members[0]?.id];
+          if (sampleDays) {
+            for (let d = 1; d <= Math.min(daysInM, 7); d++) {
+              const expectedOff = isTeamOff5x2Continuous(y, m, d, team.id);
+              const actualVal = sampleDays[d];
+              const actualOff = actualVal === true || actualVal === 'FOLGA';
+              if (actualVal === true || actualVal === false || actualVal === 'FOLGA' || actualVal === 'TRABALHO' || actualVal === undefined) {
+                if (actualOff !== expectedOff) {
+                  teamHasAnomaly = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+
         // Também verifica se duas equipes estão com o par idêntico de folgas
         if (!teamHasAnomaly) {
           for (const other of distributedTeams) {
