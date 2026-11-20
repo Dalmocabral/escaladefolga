@@ -472,3 +472,83 @@ export function buildTeamMonthOffDays(
 
   return days;
 }
+
+/**
+ * Constrói a escala inicial do mês para uma categoria quando não há escala salva no localStorage.
+ */
+export function buildInitialSchedule(
+  year: number,
+  month: number,
+  employees: Employee[],
+  shiftId: string,
+  roleName: string,
+  numTeams: number,
+  scaleType: ScaleType,
+  savedAssignments?: Record<number, string[]>,
+  customTeamOffDays?: Record<number, number>
+): Record<string, Record<number, boolean>> {
+  const schedule: Record<string, Record<number, boolean>> = {};
+  const catEmployees = employees.filter(
+    (e) => e.shiftId === shiftId && e.role.toLowerCase() === roleName.toLowerCase()
+  );
+  const cycleLen = scaleType === '5x1' ? 6 : scaleType === '5x2' ? 7 : scaleType === '6x1' ? 7 : 2;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const monthSundays: number[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    if (new Date(year, month, d).getDay() === 0) {
+      monthSundays.push(d);
+    }
+  }
+  const numSundays = monthSundays.length;
+
+  let teamGroups: { teamId: number; memberIds: string[] }[] = [];
+  if (savedAssignments && Object.keys(savedAssignments).length > 0) {
+    teamGroups = Object.entries(savedAssignments).map(([tId, ids]) => ({
+      teamId: Number(tId),
+      memberIds: ids,
+    }));
+  } else {
+    const teams = distributeEmployeesToTeams(catEmployees, numTeams);
+    teamGroups = teams.map(({ team, members }) => ({
+      teamId: team.id,
+      memberIds: members.map((m) => m.id),
+    }));
+  }
+
+  teamGroups.forEach(({ teamId, memberIds }) => {
+    const firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType, customTeamOffDays);
+
+    memberIds.forEach((empId) => {
+      const daysOff: Record<number, boolean> = {};
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (scaleType === '5x2') {
+          // Em 5x2: 2 folgas consecutivas (uma atrás da outra)
+          daysOff[d] =
+            ((d - firstOffDay) % 7 + 7) % 7 === 0 ||
+            ((d - (firstOffDay + 1)) % 7 + 7) % 7 === 0;
+        } else {
+          daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
+        }
+      }
+      schedule[empId] = daysOff;
+    });
+
+    // Distribuição de folga compensatória dominical em 5x1/6x1 para quem ficou com 0 domingos
+    if (scaleType !== '5x2' && numSundays > 0) {
+      const zeroSundayEmpIds = memberIds.filter((empId) => {
+        const offs = schedule[empId] || {};
+        return monthSundays.filter((s) => offs[s] === true).length === 0;
+      });
+
+      if (zeroSundayEmpIds.length > 0) {
+        zeroSundayEmpIds.forEach((empId, idx) => {
+          const targetSunday = monthSundays[idx % numSundays];
+          schedule[empId][targetSunday] = true;
+        });
+      }
+    }
+  });
+
+  return schedule;
+}

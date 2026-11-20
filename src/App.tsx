@@ -239,6 +239,8 @@ export default function App() {
     return (
       <ShiftPage
         shift={activeShift}
+        allShifts={SHIFT_CONFIGS}
+        onSelectShift={(s) => setSelectedShiftId(s.id)}
         onBack={() => setSelectedShiftId(null)}
         employees={employees}
         onAddEmployee={handleAddEmployee}
