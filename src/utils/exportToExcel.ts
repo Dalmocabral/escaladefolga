@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import type { Employee, EmployeeLeave, ShiftConfig } from '../types';
 import type { TeamConfig } from './teams';
+import { MONTH_NAMES } from '../constants';
 
 export interface DayColumnData {
   dayNumber: number;
@@ -11,21 +12,6 @@ export interface DayColumnData {
   isSunday: boolean;
   isSaturday: boolean;
 }
-
-const MONTH_NAMES = [
-  'Janeiro',
-  'Fevereiro',
-  'Março',
-  'Abril',
-  'Maio',
-  'Junho',
-  'Julho',
-  'Agosto',
-  'Setembro',
-  'Outubro',
-  'Novembro',
-  'Dezembro',
-];
 
 // Cores das equipes fiéis à planilha Excel do usuário (imagem)
 const TEAM_EXCEL_COLORS: Record<number, { fillArgb: string; fontArgb: string }> = {

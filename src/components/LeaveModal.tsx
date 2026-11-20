@@ -11,7 +11,7 @@ interface LeaveModalProps {
   existingLeave: EmployeeLeave | null;
   currentYear: number;
   currentMonth: number; // 0-indexed
-  onSaveLeave: (leaveData: Omit<EmployeeLeave, 'id'>) => void;
+  onSaveLeave: (leaveData: Omit<EmployeeLeave, 'id'>, existingLeaveId?: string) => void;
   onRemoveLeave: (leaveId: string) => void;
 }
 
@@ -92,13 +92,16 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({
     e.preventDefault();
     if (!startDate || !endDate) return;
 
-    onSaveLeave({
-      employeeId: employee.id,
-      type,
-      startDate,
-      endDate,
-      observation: observation.trim() || undefined,
-    });
+    onSaveLeave(
+      {
+        employeeId: employee.id,
+        type,
+        startDate,
+        endDate,
+        observation: observation.trim() || undefined,
+      },
+      existingLeave?.id
+    );
     onClose();
   };
 

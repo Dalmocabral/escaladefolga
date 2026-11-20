@@ -209,7 +209,15 @@ export default function App() {
   };
 
   const handleDeleteEmployee = (id: string) => {
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
+    const emp = employees.find((e) => e.id === id);
+    const empName = emp ? emp.name : 'este colaborador';
+    if (
+      window.confirm(
+        `Tem certeza que deseja excluir ${empName}? Esta ação removerá o colaborador do cadastro e das escalas.`
+      )
+    ) {
+      setEmployees((prev) => prev.filter((e) => e.id !== id));
+    }
   };
 
   const handleReorderCategoryEmployees = (reorderedCat: Employee[]) => {

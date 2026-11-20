@@ -19,6 +19,10 @@ import {
   type TeamConfig,
 } from '../utils/teams';
 import { exportScheduleToExcel } from '../utils/exportToExcel';
+import { MONTH_NAMES, DAY_NAMES } from '../constants';
+import { MetricsPanel } from './schedule/MetricsPanel';
+import { VacationList } from './schedule/VacationList';
+import { EmployeeContextMenu } from './schedule/EmployeeContextMenu';
 import { RoleScheduleConfigModal } from './RoleScheduleConfigModal';
 import { GenerateFolgaModal } from './GenerateFolgaModal';
 import { LeaveModal } from './LeaveModal';
@@ -34,11 +38,8 @@ import {
   ChevronRight,
   Calendar,
   MoreVertical,
-  Trash2,
   FileSpreadsheet,
   GripVertical,
-  ArrowUpDown,
-  Edit3,
 } from 'lucide-react';
 
 interface RoleSchedulePageProps {
@@ -61,24 +62,8 @@ interface DayColumn {
   isSaturday: boolean;
 }
 
-const MONTH_NAMES = [
-  'Janeiro',
-  'Fevereiro',
-  'Março',
-  'Abril',
-  'Maio',
-  'Junho',
-  'Julho',
-  'Agosto',
-  'Setembro',
-  'Outubro',
-  'Novembro',
-  'Dezembro',
-];
-
 const generateMonthDays = (year: number, month: number): DayColumn[] => {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const dayNames = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
   const columns: DayColumn[] = [];
 
   const mm = String(month + 1).padStart(2, '0');
@@ -86,7 +71,7 @@ const generateMonthDays = (year: number, month: number): DayColumn[] => {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
     const dayOfWeekIdx = date.getDay();
-    const dayShort = dayNames[dayOfWeekIdx];
+    const dayShort = DAY_NAMES[dayOfWeekIdx];
     const dd = String(d).padStart(2, '0');
 
     columns.push({
@@ -130,8 +115,10 @@ const isTeamDistributionBalanced = (
 // Re-exporta a regra que define o primeiro dia de folga por equipe
 export { getInitialTeamOffDay };
 
-// Gera folgas iniciais para Novembro/2026 para a categoria atual
-const buildInitialNovemberSchedule = (
+// Gera folgas iniciais dinâmicas para qualquer mês/ano
+const buildInitialSchedule = (
+  year: number,
+  month: number,
   employees: Employee[],
   shiftId: string,
   roleName: string,
@@ -145,10 +132,15 @@ const buildInitialNovemberSchedule = (
     (e) => e.shiftId === shiftId && e.role.toLowerCase() === roleName.toLowerCase()
   );
   const cycleLen = scaleType === '5x1' ? 6 : scaleType === '5x2' ? 7 : scaleType === '6x1' ? 7 : 2;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  // Domingos em Novembro de 2026: 01, 08, 15, 22, 29 (5 domingos)
-  const novSundays = [1, 8, 15, 22, 29];
-  const numNovSundays = novSundays.length;
+  const monthSundays: number[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    if (new Date(year, month, d).getDay() === 0) {
+      monthSundays.push(d);
+    }
+  }
+  const numSundays = monthSundays.length;
 
   let teamGroups: { teamId: number; memberIds: string[] }[] = [];
   if (savedAssignments && Object.keys(savedAssignments).length > 0) {
@@ -169,7 +161,7 @@ const buildInitialNovemberSchedule = (
 
     memberIds.forEach((empId) => {
       const daysOff: Record<number, boolean> = {};
-      for (let d = 1; d <= 30; d++) {
+      for (let d = 1; d <= daysInMonth; d++) {
         if (scaleType === '5x2') {
           // Em 5x2: 2 folgas consecutivas (uma atrás da outra)
           daysOff[d] =
@@ -183,15 +175,15 @@ const buildInitialNovemberSchedule = (
     });
 
     // Distribuição de folga compensatória dominical em 5x1/6x1 para quem ficou com 0 domingos
-    if (scaleType !== '5x2') {
+    if (scaleType !== '5x2' && numSundays > 0) {
       const zeroSundayEmpIds = memberIds.filter((empId) => {
         const offs = schedule[empId] || {};
-        return novSundays.filter((s) => offs[s] === true).length === 0;
+        return monthSundays.filter((s) => offs[s] === true).length === 0;
       });
 
       if (zeroSundayEmpIds.length > 0) {
         zeroSundayEmpIds.forEach((empId, idx) => {
-          const targetSunday = novSundays[idx % numNovSundays];
+          const targetSunday = monthSundays[idx % numSundays];
           schedule[empId][targetSunday] = true;
         });
       }
@@ -540,7 +532,9 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     const initialNumTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
     const initialScale: ScaleType = isMotorista ? '5x2' : '5x1';
     return {
-      '2026-10': buildInitialNovemberSchedule(
+      '2026-10': buildInitialSchedule(
+        2026,
+        10,
         employees,
         shift.id,
         roleName,
@@ -715,16 +709,24 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
 
     if (shift.id === 'manha' && roleName.toLowerCase() === 'operador de bloco') {
-      return [
-        {
-          id: 'leave-1',
-          employeeId: '3', // Dalmo Cabral
-          type: 'FERIAS',
-          startDate: '2026-11-05',
-          endDate: '2026-11-19',
-          observation: 'Férias regulamentares 15 dias',
-        },
-      ];
+      const dalmo = employees.find(
+        (e) =>
+          e.shiftId === 'manha' &&
+          e.role.toLowerCase() === 'operador de bloco' &&
+          e.name.toLowerCase().includes('dalmo')
+      );
+      if (dalmo) {
+        return [
+          {
+            id: 'leave-1',
+            employeeId: dalmo.id,
+            type: 'FERIAS',
+            startDate: '2026-11-05',
+            endDate: '2026-11-19',
+            observation: 'Férias regulamentares 15 dias',
+          },
+        ];
+      }
     }
     return [];
   });
@@ -803,15 +805,16 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
   // Toggle cell directly in currently viewed month (Configuração Manual Célula a Célula)
   const handleToggleCell = (empId: string, dayNumber: number) => {
-    // 1. Verifica se o colaborador tem afastamento ativo (Férias/Atestado/INSS/Exame) nesta data
-    const activeLeave = leaves.find((l) => l.employeeId === empId);
     const dateCol = dateColumns.find((c) => c.dayNumber === dayNumber);
-    if (
-      activeLeave &&
-      dateCol &&
-      dateCol.fullDate >= activeLeave.startDate &&
-      dateCol.fullDate <= activeLeave.endDate
-    ) {
+    // 1. Verifica se o colaborador tem QUALQUER afastamento ativo nesta data específica
+    const activeLeave = leaves.find(
+      (l) =>
+        l.employeeId === empId &&
+        dateCol &&
+        dateCol.fullDate >= l.startDate &&
+        dateCol.fullDate <= l.endDate
+    );
+    if (activeLeave && dateCol) {
       const emp = categoryEmployees.find((e) => e.id === empId);
       let leaveTypeStr = 'Férias';
       if (activeLeave.type === 'ATESTADO') leaveTypeStr = 'Atestado Médico';
@@ -866,30 +869,36 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     });
   };
 
-  // Open Leave Modal for specific employee and type
-  const handleOpenLeaveModal = (emp: Employee, leaveType: LeaveType) => {
+  // Open Leave Modal for specific employee and type (supports multiple leaves per employee)
+  const handleOpenLeaveModal = (
+    emp: Employee,
+    leaveType: LeaveType,
+    existingLeave?: EmployeeLeave | null
+  ) => {
     setMenuAnchor(null);
     setSelectedEmpForLeave(emp);
     setSelectedLeaveType(leaveType);
-
-    // Check if employee already has an active leave
-    const existing = leaves.find((l) => l.employeeId === emp.id) || null;
-    setSelectedExistingLeave(existing);
+    setSelectedExistingLeave(existingLeave ?? null);
     setIsLeaveModalOpen(true);
   };
 
-  // Save Leave (Férias, Atestado, INSS, Exame)
-  const handleSaveLeave = (leaveData: Omit<EmployeeLeave, 'id'>) => {
-    const newLeave: EmployeeLeave = {
-      ...leaveData,
-      id: `leave-${Date.now()}`,
-    };
-
-    setLeaves((prev) => [
-      // Remove any previous leave for this employee to update with the new one
-      ...prev.filter((l) => l.employeeId !== leaveData.employeeId),
-      newLeave,
-    ]);
+  // Save Leave (Férias, Atestado, INSS, Exame) - supports multiple leaves and editing a specific leave
+  const handleSaveLeave = (
+    leaveData: Omit<EmployeeLeave, 'id'>,
+    existingLeaveId?: string
+  ) => {
+    setLeaves((prev) => {
+      if (existingLeaveId) {
+        return prev.map((l) =>
+          l.id === existingLeaveId ? { ...leaveData, id: existingLeaveId } : l
+        );
+      }
+      const newLeave: EmployeeLeave = {
+        ...leaveData,
+        id: `leave-${Date.now()}`,
+      };
+      return [...prev, newLeave];
+    });
 
     let label = 'Férias aplicadas';
     if (leaveData.type === 'ATESTADO') label = 'Atestado aplicado';
@@ -1419,14 +1428,22 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
   };
 
-  // Reset current month
+  // Reset current month with confirmation dialog
   const handleResetCurrentMonth = () => {
+    const monthName = MONTH_NAMES[viewMonth];
+    if (
+      !window.confirm(
+        `Deseja realmente resetar a escala de ${monthName} de ${viewYear}? Todas as folgas geradas deste mês serão removidas.`
+      )
+    ) {
+      return;
+    }
     setMonthlySchedules((prev) => {
       const next = { ...prev };
       delete next[currentMonthKey];
       return next;
     });
-    showToast(`Escala de ${MONTH_NAMES[viewMonth]}/${viewYear} resetada.`);
+    showToast(`Escala de ${monthName}/${viewYear} resetada.`);
   };
 
   // Obtém as folgas de um colaborador (respeitando escalas salvas ou fallback)
@@ -1762,293 +1779,38 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         </div>
 
         {/* Painel de Indicadores / Totais Operacionais do DIA ATUAL */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between bg-white border border-slate-200/90 rounded-2xl px-4 py-2.5 shadow-2xs flex-wrap gap-2">
-            <div className="flex items-center gap-2.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <div>
-                <span className="text-xs font-black text-slate-900 tracking-tight">
-                  Situação do Dia: {String(selectedDayForMetrics).padStart(2, '0')}/{String(viewMonth + 1).padStart(2, '0')}/{viewYear}
-                </span>
-                <span className={`ml-2 text-[10px] font-bold px-2 py-0.5 rounded-md border ${
-                  isSelectedDayToday
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-blue-50 text-blue-700 border-blue-200'
-                }`}>
-                  {isSelectedDayToday ? 'HOJE (DATA ATUAL)' : 'DIA SELECIONADO NA GRADE'}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5">
-              {!isSelectedDayToday && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setViewMonth(todayMonth);
-                    setViewYear(todayYear);
-                    setSelectedDayForMetrics(todayDay);
-                  }}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-xl border border-blue-200 transition cursor-pointer active:scale-95 shadow-2xs"
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Voltar para Data Atual ({String(todayDay).padStart(2, '0')}/{String(todayMonth + 1).padStart(2, '0')})</span>
-                </button>
-              )}
-              <span className="text-[11px] text-slate-500 font-semibold">
-                Setor: <strong>{categoryEmployees.length} colaboradores</strong>
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {/* 1. Total Ativos Hoje */}
-            <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  Total Ativos
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">
-                  👥
-                </span>
-              </div>
-              <div>
-                <div className="text-2xl font-black text-slate-900 tracking-tight">
-                  {totalAtivosHoje}
-                </div>
-                <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
-                  trabalhando no turno hoje
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Total de Folga Hoje */}
-            <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex flex-col justify-between hover:shadow-xs transition">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  Total Folga
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
-                  ☕
-                </span>
-              </div>
-              <div>
-                <div className="text-2xl font-black text-slate-900 tracking-tight">
-                  {totalFolgaHoje}
-                </div>
-                <div className="text-[10px] font-semibold text-blue-600 mt-0.5">
-                  de folga pela escala hoje
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Total de Férias Hoje */}
-            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-              totalFeriasHoje > 0
-                ? 'bg-purple-50/80 border-purple-200 ring-1 ring-purple-300/40 text-purple-950'
-                : 'bg-white border-slate-200/90'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalFeriasHoje > 0 ? 'text-purple-900' : 'text-slate-500'}`}>
-                  Total Férias
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
-                  🏖️
-                </span>
-              </div>
-              <div>
-                <div className={`text-2xl font-black tracking-tight ${totalFeriasHoje > 0 ? 'text-purple-950' : 'text-slate-900'}`}>
-                  {totalFeriasHoje}
-                </div>
-                <div className={`text-[10px] font-bold mt-0.5 ${totalFeriasHoje > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
-                  {totalFeriasHoje > 0 ? `${totalFeriasHoje} em férias hoje` : 'nenhum hoje'}
-                </div>
-              </div>
-            </div>
-
-            {/* 4. Total de Atestado Hoje */}
-            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-              totalAtestadoHoje > 0
-                ? 'bg-rose-50/80 border-rose-200 ring-1 ring-rose-300/40 text-rose-950'
-                : 'bg-white border-slate-200/90'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalAtestadoHoje > 0 ? 'text-rose-900' : 'text-slate-500'}`}>
-                  Total Atestado
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">
-                  🩺
-                </span>
-              </div>
-              <div>
-                <div className={`text-2xl font-black tracking-tight ${totalAtestadoHoje > 0 ? 'text-rose-950' : 'text-slate-900'}`}>
-                  {totalAtestadoHoje}
-                </div>
-                <div className={`text-[10px] font-bold mt-0.5 ${totalAtestadoHoje > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
-                  {totalAtestadoHoje > 0 ? `${totalAtestadoHoje} de atestado hoje` : 'nenhum hoje'}
-                </div>
-              </div>
-            </div>
-
-            {/* 5. Total INSS Hoje */}
-            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-              totalINSSHoje > 0
-                ? 'bg-amber-50/80 border-amber-200 ring-1 ring-amber-300/40 text-amber-950'
-                : 'bg-white border-slate-200/90'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalINSSHoje > 0 ? 'text-amber-900' : 'text-slate-500'}`}>
-                  Total INSS
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold">
-                  🏥
-                </span>
-              </div>
-              <div>
-                <div className={`text-2xl font-black tracking-tight ${totalINSSHoje > 0 ? 'text-amber-950' : 'text-slate-900'}`}>
-                  {totalINSSHoje}
-                </div>
-                <div className={`text-[10px] font-bold mt-0.5 ${totalINSSHoje > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
-                  {totalINSSHoje > 0 ? `${totalINSSHoje} pelo INSS hoje` : 'nenhum hoje'}
-                </div>
-              </div>
-            </div>
-
-            {/* 6. Total Exame Hoje */}
-            <div className={`rounded-2xl border p-3.5 shadow-2xs flex flex-col justify-between transition ${
-              totalExameHoje > 0
-                ? 'bg-teal-50/80 border-teal-200 ring-1 ring-teal-300/40 text-teal-950'
-                : 'bg-white border-slate-200/90'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11px] font-bold uppercase tracking-wider ${totalExameHoje > 0 ? 'text-teal-900' : 'text-slate-500'}`}>
-                  Total Exame
-                </span>
-                <span className="w-6 h-6 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center text-xs font-bold">
-                  📋
-                </span>
-              </div>
-              <div>
-                <div className={`text-2xl font-black tracking-tight ${totalExameHoje > 0 ? 'text-teal-950' : 'text-slate-900'}`}>
-                  {totalExameHoje}
-                </div>
-                <div className={`text-[10px] font-bold mt-0.5 ${totalExameHoje > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
-                  {totalExameHoje > 0 ? `${totalExameHoje} em exame hoje` : 'nenhum hoje'}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <MetricsPanel
+          selectedDay={selectedDayForMetrics}
+          viewMonth={viewMonth}
+          viewYear={viewYear}
+          isSelectedDayToday={isSelectedDayToday}
+          todayDay={todayDay}
+          todayMonth={todayMonth}
+          totalAtivos={totalAtivosHoje}
+          totalFolga={totalFolgaHoje}
+          totalFerias={totalFeriasHoje}
+          totalAtestado={totalAtestadoHoje}
+          totalINSS={totalINSSHoje}
+          totalExame={totalExameHoje}
+          totalCategoryEmployees={categoryEmployees.length}
+          onResetToToday={() => {
+            setViewMonth(todayMonth);
+            setViewYear(todayYear);
+            setSelectedDayForMetrics(todayDay);
+          }}
+        />
 
         {/* Lista Destacada Acima da Tabela para Colaboradores em Férias */}
-        {vacationEmployeesInMonth.length > 0 && (
-          <div className="bg-gradient-to-r from-purple-50/90 via-purple-50/60 to-indigo-50/40 border border-purple-200/90 rounded-2xl p-4 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex items-center gap-2.5 pb-2.5 border-b border-purple-200/60">
-              <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center text-sm shadow-xs shrink-0">
-                🏖️
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-xs sm:text-sm text-purple-950">
-                  Colaboradores em Férias no Mês ({MONTH_NAMES[viewMonth]}/{viewYear})
-                </h3>
-                <span className="bg-purple-200/90 text-purple-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-purple-300">
-                  {vacationEmployeesInMonth.length} {vacationEmployeesInMonth.length === 1 ? 'colaborador' : 'colaboradores'}
-                </span>
-              </div>
-            </div>
-
-            {/* Lista dos Colaboradores em Férias */}
-            <div className="flex flex-col divide-y divide-purple-100 bg-white/95 rounded-xl border border-purple-200/80 overflow-hidden shadow-2xs mt-2.5">
-              {vacationEmployeesInMonth.map(({ employee, leave, team }) => {
-                const [, sMonth, sDay] = leave.startDate.split('-');
-                const [, eMonth, eDay] = leave.endDate.split('-');
-                const startStr = `${sDay}/${sMonth}`;
-                const endStr = `${eDay}/${eMonth}`;
-
-                const startD = new Date(leave.startDate);
-                const endD = new Date(leave.endDate);
-                const diffDays = Math.max(
-                  1,
-                  Math.round((endD.getTime() - startD.getTime()) / (1000 * 60 * 60 * 24)) + 1
-                );
-
-                return (
-                  <div
-                    key={leave.id}
-                    className="p-2.5 sm:px-3 hover:bg-purple-50/50 transition flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
-                      {/* Avatar */}
-                      <div
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${team.avatarBg}`}
-                      >
-                        {employee.name
-                          .split(' ')
-                          .slice(0, 2)
-                          .map((n) => n[0])
-                          .join('')}
-                      </div>
-
-                      {/* Nome e Matrícula */}
-                      <div className="flex items-center gap-1.5 min-w-[180px] shrink-0">
-                        <span className="font-bold text-xs text-slate-900">
-                          {employee.name}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400">
-                          ({employee.registration})
-                        </span>
-                      </div>
-
-                      {/* Equipe */}
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 min-w-[110px] shrink-0">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: team.dotColor }}
-                        />
-                        {team.name}
-                      </span>
-
-                      {/* Período de Férias */}
-                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100/70 px-2 py-0.5 rounded border border-purple-200 shrink-0">
-                        {startStr} até {endStr} ({diffDays} dias)
-                      </span>
-
-                      {/* Observação */}
-                      {leave.observation && (
-                        <span className="text-[10px] text-slate-500 truncate italic hidden md:inline">
-                          {leave.observation}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Ações Rápidas */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenLeaveModal(employee, 'FERIAS')}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-100/60 transition"
-                        title="Editar período de férias"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleRemoveLeave(leave.id);
-                          showToast(`🏖️ Férias de ${employee.name} removidas. Colaborador retornou para a tabela!`);
-                        }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                        title="Remover férias e retornar colaborador para a tabela"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <VacationList
+          vacationEmployees={vacationEmployeesInMonth}
+          monthName={MONTH_NAMES[viewMonth]}
+          viewYear={viewYear}
+          onEditLeave={(emp, leave) => handleOpenLeaveModal(emp, 'FERIAS', leave)}
+          onRemoveLeave={(leaveId, empName) => {
+            handleRemoveLeave(leaveId);
+            showToast(`🏖️ Férias de ${empName} removidas. Colaborador retornou para a tabela!`);
+          }}
+        />
 
         {/* Se NÃO houver colaboradores na categoria */}
         {categoryEmployees.length === 0 ? (
@@ -2085,9 +1847,12 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                       Matrícula
                     </th>
 
-                    {/* Coluna 2: Dom. Mês */}
-                    <th className="sticky left-[85px] z-20 bg-slate-50 border-r border-slate-200 py-3 px-2 text-center font-bold text-[10px] text-slate-600 uppercase tracking-wider min-w-[75px] shadow-xs leading-tight">
-                      Dom. Mês
+                    {/* Coluna 2: Dom. Folga */}
+                    <th
+                      className="sticky left-[85px] z-20 bg-slate-50 border-r border-slate-200 py-3 px-2 text-center font-bold text-[10px] text-slate-600 uppercase tracking-wider min-w-[75px] shadow-xs leading-tight"
+                      title="Total de domingos de folga no mês"
+                    >
+                      Dom. Folga
                     </th>
 
                     {/* Coluna 3: Colaborador */}
@@ -2257,7 +2022,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                             {emp.registration || '—'}
                           </td>
 
-                          {/* 2. Dom. Mês Sticky */}
+                          {/* 2. Dom. Folga Sticky */}
                           <td className="sticky left-[85px] z-10 bg-white border-r border-slate-200 px-2 text-center shadow-xs">
                             <span
                               className={`inline-block text-xs font-bold px-2 py-0.5 rounded-md ${
@@ -2265,6 +2030,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                   : 'bg-slate-100 text-slate-600'
                               }`}
+                              title={`${sundayOffsCount} domingo(s) de folga concedido(s) neste mês`}
                             >
                               {sundayOffsCount}
                             </span>
@@ -2493,169 +2259,30 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           onRemoveLeave={handleRemoveLeave}
         />
 
-        {/* Menu Flutuante ao Clicar no Colaborador (Renderizado em Camada Fixa com z-50 para NUNCA ficar atrás dos nomes) */}
-        {menuAnchor && (
-          <>
-            {/* Backdrop para fechar ao clicar fora */}
-            <div
-              className="fixed inset-0 z-50 bg-black/10"
-              onClick={() => setMenuAnchor(null)}
-            />
-
-            {/* Menu Popover Flutuante */}
-            <div
-              style={{
-                position: 'fixed',
-                top: `${menuAnchor.top}px`,
-                left: `${menuAnchor.left}px`,
-              }}
-              className="z-50 bg-white rounded-2xl shadow-2xl border border-slate-200 p-2 w-64 text-xs font-semibold animate-in fade-in zoom-in-95 duration-100 ring-1 ring-black/5"
-            >
-              {/* Cabeçalho do Menu com Identificação do Colaborador */}
-              <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between mb-1">
-                <div className="min-w-0 pr-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Afastamento
-                  </span>
-                  <span className="text-xs font-bold text-slate-900 truncate block">
-                    {menuAnchor.employee.name}
-                  </span>
-                </div>
-                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-mono shrink-0">
-                  {menuAnchor.employee.registration || 'S/M'}
-                </span>
-              </div>
-
-              {/* Opções de Afastamento */}
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'FERIAS')}
-                  className="w-full px-3 py-2 text-left hover:bg-purple-50 text-slate-800 hover:text-purple-700 rounded-xl flex items-center gap-2.5 transition group"
-                >
-                  <span className="text-lg p-1 bg-purple-100 text-purple-700 rounded-lg group-hover:scale-105 transition shrink-0">
-                    🏖️
-                  </span>
-                  <div>
-                    <div className="font-bold text-xs text-slate-900 group-hover:text-purple-700">
-                      Adicionar Férias
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-normal">
-                      Definir período de descanso
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'ATESTADO')}
-                  className="w-full px-3 py-2 text-left hover:bg-rose-50 text-slate-800 hover:text-rose-700 rounded-xl flex items-center gap-2.5 transition group"
-                >
-                  <span className="text-lg p-1 bg-rose-100 text-rose-700 rounded-lg group-hover:scale-105 transition shrink-0">
-                    🩺
-                  </span>
-                  <div>
-                    <div className="font-bold text-xs text-slate-900 group-hover:text-rose-700">
-                      Adicionar Atestado
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-normal">
-                      Licença médica / saúde
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'INSS')}
-                  className="w-full px-3 py-2 text-left hover:bg-amber-50 text-slate-800 hover:text-amber-700 rounded-xl flex items-center gap-2.5 transition group"
-                >
-                  <span className="text-lg p-1 bg-amber-100 text-amber-700 rounded-lg group-hover:scale-105 transition shrink-0">
-                    🏥
-                  </span>
-                  <div>
-                    <div className="font-bold text-xs text-slate-900 group-hover:text-amber-700">
-                      Adicionar INSS
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-normal">
-                      Afastamento previdenciário
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleOpenLeaveModal(menuAnchor.employee, 'EXAME')}
-                  className="w-full px-3 py-2 text-left hover:bg-teal-50 text-slate-800 hover:text-teal-700 rounded-xl flex items-center gap-2.5 transition group"
-                >
-                  <span className="text-lg p-1 bg-teal-100 text-teal-700 rounded-lg group-hover:scale-105 transition shrink-0">
-                    📋
-                  </span>
-                  <div>
-                    <div className="font-bold text-xs text-slate-900 group-hover:text-teal-700">
-                      Adicionar Exame
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-normal">
-                      Exame periódico / retorno
-                    </div>
-                  </div>
-                </button>
-
-                {(() => {
-                  const activeEmpLeave = leaves.find(
-                    (l) => l.employeeId === menuAnchor.employee.id
-                  );
-                  if (!activeEmpLeave) return null;
-
-                  return (
-                    <div className="border-t border-slate-100 pt-1 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleRemoveLeave(activeEmpLeave.id);
-                          setMenuAnchor(null);
-                        }}
-                        className="w-full px-3 py-2 text-left hover:bg-rose-50 text-rose-600 rounded-xl flex items-center gap-2 transition text-xs font-semibold"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Remover Afastamento Atual</span>
-                      </button>
-                    </div>
-                  );
-                })()}
-
-                {/* Opção Rápida: Mover para outra Equipe */}
-                <div className="border-t border-slate-100 pt-2 mt-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-1 mb-1.5 flex items-center gap-1">
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                    Mover para Equipe:
-                  </span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {distributedTeams.map(({ team }) => {
-                      const isCurrentTeam =
-                        employeeTeamMap.get(menuAnchor.employee.id)?.id === team.id;
-                      if (isCurrentTeam) return null;
-
-                      return (
-                        <button
-                          key={team.id}
-                          type="button"
-                          onClick={() => handleMoveToTeam(menuAnchor.employee, team.id)}
-                          className="px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-100 text-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition border border-slate-100 hover:border-slate-300"
-                        >
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: team.dotColor }}
-                          />
-                          <span className="truncate">{team.colorName}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
+        {/* Menu Flutuante ao Clicar no Colaborador */}
+        <EmployeeContextMenu
+          menuAnchor={menuAnchor}
+          onClose={() => setMenuAnchor(null)}
+          employeeLeaves={
+            menuAnchor
+              ? leaves.filter((l) => l.employeeId === menuAnchor.employee.id)
+              : []
+          }
+          distributedTeams={distributedTeams}
+          currentTeamId={
+            menuAnchor
+              ? employeeTeamMap.get(menuAnchor.employee.id)?.id
+              : undefined
+          }
+          onOpenLeaveModal={(emp, leaveType, existingLeave) =>
+            handleOpenLeaveModal(emp, leaveType, existingLeave)
+          }
+          onRemoveLeave={(leaveId) => {
+            handleRemoveLeave(leaveId);
+            setMenuAnchor(null);
+          }}
+          onMoveToTeam={handleMoveToTeam}
+        />
 
         {/* Toast Notification */}
         {toastMessage && (

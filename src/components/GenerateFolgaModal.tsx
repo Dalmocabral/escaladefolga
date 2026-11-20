@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type {
   GenerateFolgaOptions,
   GenerationMode,
@@ -6,6 +6,7 @@ import type {
   CompensatorySundayMode,
   CompensatoryStrategy,
 } from '../types';
+import { ALL_MONTHS, getAvailableYears } from '../constants';
 import {
   X,
   Wand2,
@@ -25,21 +26,6 @@ interface GenerateFolgaModalProps {
   onConfirm: (options: GenerateFolgaOptions) => void;
 }
 
-const ALL_MONTHS = [
-  { value: 0, label: 'Janeiro' },
-  { value: 1, label: 'Fevereiro' },
-  { value: 2, label: 'Março' },
-  { value: 3, label: 'Abril' },
-  { value: 4, label: 'Maio' },
-  { value: 5, label: 'Junho' },
-  { value: 6, label: 'Julho' },
-  { value: 7, label: 'Agosto' },
-  { value: 8, label: 'Setembro' },
-  { value: 9, label: 'Outubro' },
-  { value: 10, label: 'Novembro' },
-  { value: 11, label: 'Dezembro' },
-];
-
 export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
   isOpen,
   onClose,
@@ -55,6 +41,10 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
   const [mode, setMode] = useState<GenerationMode>('continuidade');
   const [compensatorySunday, setCompensatorySunday] = useState<CompensatorySundayMode>('auto');
   const compensatoryStrategy: CompensatoryStrategy = 'swap';
+
+  const availableYears = useMemo(() => {
+    return getAvailableYears(currentViewYear);
+  }, [currentViewYear]);
 
   // Sincroniza sempre que o modal abre com o mês que o usuário está visualizando na tela
   useEffect(() => {
@@ -159,8 +149,11 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
                 onChange={(e) => setTargetYear(Number(e.target.value))}
                 className="w-full bg-slate-50 border border-slate-300 text-xs rounded-xl px-3 py-2.5 font-bold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               >
-                <option value={2026}>2026</option>
-                <option value={2027}>2027</option>
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
