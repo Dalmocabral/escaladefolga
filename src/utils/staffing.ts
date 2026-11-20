@@ -279,41 +279,47 @@ function computeCategoryRow(
     leaves = [];
   }
 
-  // Se for Motorista e não tiver afastamentos no banco local, carrega os padrões da planilha
-  if (roleName.toLowerCase() === 'motorista' && leaves.length === 0) {
-    const motEmployees = catEmployees;
-    const fab = motEmployees.find((e) => e.registration === '1015');
-    const car = motEmployees.find((e) => e.registration === '1001');
-    const mar = motEmployees.find((e) => e.registration === '1008');
-    if (fab) {
-      leaves.push({
-        id: 'init-ferias-1',
-        employeeId: fab.id,
-        type: 'FERIAS',
-        startDate: '2026-11-10',
-        endDate: '2026-11-24',
-        observation: 'Férias regulamentares (15 dias)',
-      });
-    }
-    if (car) {
-      leaves.push({
-        id: 'init-ferias-2',
-        employeeId: car.id,
-        type: 'FERIAS',
-        startDate: '2026-11-10',
-        endDate: '2026-11-24',
-        observation: 'Férias regulamentares (15 dias)',
-      });
-    }
-    if (mar) {
-      leaves.push({
-        id: 'init-ferias-3',
-        employeeId: mar.id,
-        type: 'FERIAS',
-        startDate: '2026-11-10',
-        endDate: '2026-11-24',
-        observation: 'Férias programadas (15 dias)',
-      });
+  // Se não tiver afastamentos no banco local, carrega os padrões da planilha de teste para 17/11/2026
+  if (leaves.length === 0 && catEmployees.length > 0) {
+    const rLower = roleName.toLowerCase();
+    const addLeave = (empIdx: number, type: 'FERIAS' | 'ATESTADO', idSuffix: string) => {
+      const emp = catEmployees[empIdx];
+      if (emp) {
+        leaves.push({
+          id: `init-${rLower}-${idSuffix}`,
+          employeeId: emp.id,
+          type,
+          startDate: '2026-11-10',
+          endDate: '2026-11-24',
+          observation: type === 'FERIAS' ? 'Férias programadas' : 'Atestado médico',
+        });
+      }
+    };
+
+    if (rLower === 'motorista') {
+      addLeave(0, 'FERIAS', '1');
+      addLeave(1, 'FERIAS', '2');
+    } else if (rLower === 'operador de rtg') {
+      addLeave(0, 'FERIAS', '1');
+      addLeave(1, 'FERIAS', '2');
+      addLeave(2, 'ATESTADO', '3');
+    } else if (rLower === 'operador reach stacker') {
+      addLeave(0, 'FERIAS', '1');
+      addLeave(1, 'ATESTADO', '2');
+      addLeave(2, 'ATESTADO', '3');
+    } else if (rLower === 'operador de bloco') {
+      addLeave(0, 'FERIAS', '1');
+      addLeave(1, 'ATESTADO', '2');
+    } else if (rLower === 'operador de portêiner') {
+      addLeave(0, 'FERIAS', '1');
+    } else if (rLower === 'assistente de pátio') {
+      addLeave(0, 'FERIAS', '1');
+    } else if (rLower === 'auxiliar de pátio') {
+      addLeave(0, 'FERIAS', '1');
+    } else if (rLower === 'estivador') {
+      addLeave(0, 'FERIAS', '1');
+    } else if (rLower === 'material') {
+      addLeave(0, 'ATESTADO', '1');
     }
   }
 

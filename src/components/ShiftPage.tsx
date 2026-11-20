@@ -37,6 +37,7 @@ const OPERATIONAL_CARDS: OperationalCard[] = [
   { id: 'conferente_navio', title: 'Escala Conferente de Navio', role: 'Conferente de Navio', emoji: '🛳️' },
   { id: 'bloco', title: 'Escala Bloco', role: 'Operador de Bloco', emoji: '🧱' },
   { id: 'estivador', title: 'Escala Estivador', role: 'Estivador', emoji: '⚓' },
+  { id: 'material', title: 'Escala Material', role: 'Material', emoji: '📦' },
 ];
 
 export const ShiftPage: React.FC<ShiftPageProps> = ({
