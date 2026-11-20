@@ -16,6 +16,7 @@ import {
   computeTeamContinuityOffDays,
   buildTeamMonthOffDays,
   buildInitialSchedule,
+  isTeamOff5x2Continuous,
   TEAMS,
   type TeamConfig,
 } from '../utils/teams';
@@ -595,9 +596,11 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     return map;
   }, [distributedTeams]);
 
-  // AUTO-HEALING: Detecta e sanitiza anomalias em escalas 5x2 corrompidas no localStorage
+  // AUTO-HEALING DEFINITIVO: Detecta e sanitiza anomalias em escalas corrompidas no localStorage
   // 1) Corrige anomalias de 3 ou 4 folgas consecutivas causadas por rotações antigas
   // 2) Sincroniza 100% dos membros de uma mesma equipe para que tenham rigorosamente a mesma escala
+  // 3) Garante que duas equipes nunca folguem os dois dias juntas em 5x2 (escala corrida contínua com 7 equipes)
+  // 4) Corrige meses como Outubro se estiverem com folgas picadas (5x1 em vez de 5x2)
   useEffect(() => {
     let hasChanges = false;
     const updatedSchedules: Record<string, Record<string, Record<number, boolean | string>>> = { ...monthlySchedules };
@@ -607,13 +610,14 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       const [yStr, mStr] = monthKey.split('-');
       const y = parseInt(yStr, 10);
       const m = parseInt(mStr, 10);
-      const mScale = monthlyScaleTypes[monthKey] || settings.scaleType;
-      if (mScale !== '5x2') return;
+      const is5x2 = settings.scaleType === '5x2' || monthlyScaleTypes[monthKey] === '5x2';
+      if (!is5x2) return;
 
       const daysInM = new Date(y, m + 1, 0).getDate();
       const updatedMonthData: Record<string, Record<number, boolean | string>> = { ...monthData };
       let monthHasChanges = false;
 
+      // Valida cada equipe em busca de anomalias
       distributedTeams.forEach(({ team, members }) => {
         if (members.length === 0) return;
 
@@ -622,19 +626,28 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
         for (const member of members) {
           const empDays = updatedMonthData[member.id];
-          if (!empDays) continue;
+          if (!empDays) {
+            teamHasAnomaly = true;
+            break;
+          }
 
-          // Verifica se há mais de 2 folgas consecutivas (onde valor é true ou 'FOLGA')
+          // Verifica se há folga isolada de 1 dia ou mais de 2 folgas consecutivas
           let consecutiveOff = 0;
           for (let d = 1; d <= daysInM; d++) {
             const val = empDays[d];
-            if (val === true || val === 'FOLGA') {
+            const isOff = val === true || val === 'FOLGA';
+            if (isOff) {
               consecutiveOff++;
               if (consecutiveOff > 2) {
                 teamHasAnomaly = true;
                 break;
               }
             } else {
+              if (consecutiveOff === 1 && d > 2) {
+                // Folga isolada de 1 dia é anomalia (escala 5x1 antiga como em Outubro)
+                teamHasAnomaly = true;
+                break;
+              }
               consecutiveOff = 0;
             }
           }
@@ -656,38 +669,48 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
           if (teamHasAnomaly) break;
         }
 
+        // Também verifica se duas equipes estão com o par idêntico de folgas
+        if (!teamHasAnomaly) {
+          for (const other of distributedTeams) {
+            if (other.team.id === team.id || other.members.length === 0) continue;
+            const otherDays = updatedMonthData[other.members[0]?.id];
+            const myDays = updatedMonthData[members[0]?.id];
+            if (otherDays && myDays) {
+              let sameOffCount = 0;
+              for (let d = 1; d <= Math.min(daysInM, 7); d++) {
+                const myOff = myDays[d] === true || myDays[d] === 'FOLGA';
+                const otherOff = otherDays[d] === true || otherDays[d] === 'FOLGA';
+                if (myOff && otherOff) sameOffCount++;
+              }
+              // Duas equipes com 2 folgas iguais na mesma semana colidiram no mesmo par!
+              if (sameOffCount >= 2) {
+                teamHasAnomaly = true;
+                break;
+              }
+            }
+          }
+        }
+
         if (teamHasAnomaly) {
           monthHasChanges = true;
-          let defaultFirstOff = getInitialTeamOffDay(
-            team.id,
-            settings.numTeams,
-            '5x2',
-            settings.customTeamOffDays
-          );
+          const cleanTeamDays: Record<number, boolean> = {};
           if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
-            const monthOffset = ((y * 12 + m) % 7 + 7) % 7;
-            defaultFirstOff = ((team.id + monthOffset) % 7) + 1;
-          }
-
-          const prevKey = `${m === 0 ? y - 1 : y}-${m === 0 ? 11 : m - 1}`;
-          const prevMonthSchedule = updatedSchedules[prevKey];
-          let continuity = { firstOff: defaultFirstOff, isSecondDayOfOff: false };
-          if (prevMonthSchedule) {
-            const memberIds = members.map((mem) => mem.id);
-            continuity = computeTeamContinuityOffDays(
-              prevMonthSchedule,
-              memberIds,
-              new Date(y, m, 0).getDate(),
+            for (let d = 1; d <= daysInM; d++) {
+              cleanTeamDays[d] = isTeamOff5x2Continuous(y, m, d, team.id);
+            }
+          } else {
+            const defaultFirstOff = getInitialTeamOffDay(
+              team.id,
+              settings.numTeams,
               '5x2',
-              defaultFirstOff
+              settings.customTeamOffDays
             );
+            const teamOffs = buildTeamMonthOffDays(daysInM, '5x2', { firstOff: defaultFirstOff, isSecondDayOfOff: false });
+            Object.assign(cleanTeamDays, teamOffs);
           }
-
-          const cleanTeamDays = buildTeamMonthOffDays(daysInM, '5x2', continuity);
 
           members.forEach((member) => {
             const currentEmpDays = updatedMonthData[member.id] || {};
-            // Preserva afastamentos especiais (FÉRIAS, ATESTADO, etc.) se existirem
             const preserved: Record<number, boolean | string> = {};
             for (let d = 1; d <= daysInM; d++) {
               const existingVal = currentEmpDays[d];
@@ -1343,31 +1366,32 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         cfg.customTeamOffDays
       );
 
-      // Em 5x2 com 7 equipes e revezamento (Modelo A), aplica o deslocamento mensal para revezar as folgas
+      let teamDays: Record<number, boolean> = {};
+
       if (effectiveScaleType === '5x2' && cfg.numTeams === 7 && cfg.rotationMode !== 'fixed' && !cfg.customTeamOffDays?.[team.id]) {
-        const monthOffset = ((targetYear * 12 + targetMonth) % 7 + 7) % 7;
-        defaultFirstOff = ((team.id + monthOffset) % 7) + 1;
+        // Escala Corrida Contínua 5x2 com 7 equipes: distribuição perfeita determinística
+        for (let d = 1; d <= daysInTarget; d++) {
+          teamDays[d] = isTeamOff5x2Continuous(targetYear, targetMonth, d, team.id);
+        }
+      } else {
+        // CÁLCULO DE CONTINUIDADE REAL DA EQUIPE:
+        let continuity = {
+          firstOff: defaultFirstOff,
+          isSecondDayOfOff: false,
+        };
+
+        if (mode === 'continuidade' && prevMonthData) {
+          continuity = computeTeamContinuityOffDays(
+            prevMonthData,
+            memberIds,
+            prevMonthTotalDays,
+            effectiveScaleType,
+            defaultFirstOff
+          );
+        }
+
+        teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
       }
-
-      // CÁLCULO DE CONTINUIDADE REAL DA EQUIPE:
-      // Se for continuidade e houver histórico, calcula quando a equipe realmente deve folgar
-      // baseado no último dia de folga no mês anterior!
-      let continuity = {
-        firstOff: defaultFirstOff,
-        isSecondDayOfOff: false,
-      };
-
-      if (mode === 'continuidade' && prevMonthData) {
-        continuity = computeTeamContinuityOffDays(
-          prevMonthData,
-          memberIds,
-          prevMonthTotalDays,
-          effectiveScaleType,
-          defaultFirstOff
-        );
-      }
-
-      const teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
 
       // TODOS os membros da mesma equipe recebem RIGOROSAMENTE a mesma escala
       members.forEach((emp) => {
@@ -1451,22 +1475,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     }
   };
 
-  // Auto-reparo de segurança: se Dezembro foi previamente gerado com a anomalia (Equipe Verde com folga no Dia 1 em vez do Dia 6),
-  // regenera automaticamente com continuidade perfeita
-  useEffect(() => {
-    const novSchedule = monthlySchedules['2026-10'];
-    const decSchedule = monthlySchedules['2026-11'];
-    if (novSchedule && decSchedule && teamAssignments[0]?.length > 0) {
-      const verdeSampleId = teamAssignments[0][0];
-      const novOffs = novSchedule[verdeSampleId] || {};
-      const decOffs = decSchedule[verdeSampleId] || {};
-
-      // Se em Novembro a Equipe Verde folgou no dia 30, mas em Dezembro está com folga no dia 1
-      if (novOffs[30] === true && decOffs[1] === true) {
-        generateScheduleForMonth(11, 2026, settings, 'continuidade', 'auto', undefined, '5x2');
-      }
-    }
-  }, [monthlySchedules, teamAssignments, settings]);
 
   // CONFIRMAÇÃO DE GERAÇÃO (Modal Gerar Folga)
   const handleConfirmGenerate = (options: GenerateFolgaOptions) => {

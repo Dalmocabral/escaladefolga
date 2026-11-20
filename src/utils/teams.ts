@@ -488,6 +488,27 @@ export const ROTATION_PAIRS_5X2: [number, number][] = [
 ];
 
 /**
+ * Determina se a equipe está de folga em uma data específica no regime contínuo 5x2 com 7 equipes.
+ * Ancorado com sincronização contínua perfeita:
+ * - A cada dia do ano, RIGOROSAMENTE 2 equipes folgam e 5 equipes trabalham.
+ * - Toda equipe trabalha rigorosamente 5 dias consecutivos e folga rigorosamente 2 dias consecutivos.
+ * - Duas equipes NUNCA folgam os dois dias juntas (cruzam apenas em 1 dia como entrada/saída).
+ * - Sincronizado para que a Equipe Verde folgue Seg 02 e Ter 03 de Novembro de 2026.
+ */
+export function isTeamOff5x2Continuous(
+  year: number,
+  month: number,
+  day: number,
+  teamId: number
+): boolean {
+  const d = new Date(Date.UTC(year, month, day));
+  const anchor = new Date(Date.UTC(2026, 10, 1));
+  const diffDays = Math.round((d.getTime() - anchor.getTime()) / 86400000);
+  const mod = (((diffDays - teamId + 6) % 7) + 7) % 7;
+  return mod === 0 || mod === 1;
+}
+
+/**
  * Constrói a escala inicial do mês para uma categoria quando não há escala salva no localStorage.
  */
 export function buildInitialSchedule(
@@ -545,8 +566,10 @@ export function buildInitialSchedule(
 
     const daysOff: Record<number, boolean> = {};
     for (let d = 1; d <= daysInMonth; d++) {
-      if (scaleType === '5x2') {
-        // Em 5x2: rigorosamente 2 folgas consecutivas a cada 7 dias (nunca 3 ou 4 folgas)
+      if (scaleType === '5x2' && numTeams === 7 && rotationMode !== 'fixed' && !customTeamOffDays?.[teamId]) {
+        daysOff[d] = isTeamOff5x2Continuous(year, month, d, teamId);
+      } else if (scaleType === '5x2') {
+        // Em 5x2 Fixo: rigorosamente 2 folgas consecutivas a cada 7 dias
         daysOff[d] =
           ((d - firstOffDay) % 7 + 7) % 7 === 0 ||
           ((d - (firstOffDay + 1)) % 7 + 7) % 7 === 0;
