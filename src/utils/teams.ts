@@ -474,7 +474,7 @@ export function buildTeamMonthOffDays(
 }
 
 /**
- * Pares de folgas consecutivas na semana para a Escala 5x2 (Modelo A - Rotação Semanal de 7 Equipes)
+ * Pares de folgas consecutivas na semana para a Escala 5x2
  * 0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado
  */
 export const ROTATION_PAIRS_5X2: [number, number][] = [
@@ -486,30 +486,6 @@ export const ROTATION_PAIRS_5X2: [number, number][] = [
   [5, 6], // Par 5: Sexta e Sábado
   [6, 0], // Par 6: Sábado e Domingo
 ];
-
-/**
- * Retorna o índice sequencial da semana de calendário (iniciando no Domingo)
- * ancorado no domingo 04/01/2026 para sincronia perfeita entre meses e anos.
- */
-export function getCalendarWeekIndex(year: number, month: number, day: number): number {
-  const d = new Date(year, month, day);
-  const dayOfWeek = d.getDay();
-  const sunday = new Date(Date.UTC(year, month, day - dayOfWeek));
-  const anchorSunday = new Date(Date.UTC(2026, 0, 4));
-  const diffDays = Math.round((sunday.getTime() - anchorSunday.getTime()) / (24 * 60 * 60 * 1000));
-  return Math.floor(diffDays / 7);
-}
-
-/**
- * Determina se a equipe está de folga em uma data específica usando o Modelo A (Escala Corrida / Rotação Semanal)
- */
-export function isTeamOffInWeeklyRotation(teamId: number, year: number, month: number, day: number): boolean {
-  const weekIdx = getCalendarWeekIndex(year, month, day);
-  const dayOfWeek = new Date(year, month, day).getDay();
-  const pairIdx = (((teamId + weekIdx) % 7) + 7) % 7;
-  const pair = ROTATION_PAIRS_5X2[pairIdx];
-  return pair[0] === dayOfWeek || pair[1] === dayOfWeek;
-}
 
 /**
  * Constrói a escala inicial do mês para uma categoria quando não há escala salva no localStorage.
@@ -532,8 +508,6 @@ export function buildInitialSchedule(
   );
   const cycleLen = scaleType === '5x1' ? 6 : scaleType === '5x2' ? 7 : scaleType === '6x1' ? 7 : 2;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const useWeeklyRotation =
-    scaleType === '5x2' && (rotationMode === 'weekly_rotation' || (rotationMode !== 'fixed' && numTeams === 7));
 
   const monthSundays: number[] = [];
   for (let d = 1; d <= daysInMonth; d++) {
@@ -557,25 +531,33 @@ export function buildInitialSchedule(
     }));
   }
 
-  teamGroups.forEach(({ teamId, memberIds }) => {
-    const firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType, customTeamOffDays);
+  // Em 5x2 com 7 equipes e modo revezamento (Modelo A), aplica o deslocamento mensal
+  const monthOffset =
+    scaleType === '5x2' && numTeams === 7 && rotationMode !== 'fixed'
+      ? ((year * 12 + month) % 7 + 7) % 7
+      : 0;
 
-    memberIds.forEach((empId) => {
-      const daysOff: Record<number, boolean> = {};
-      for (let d = 1; d <= daysInMonth; d++) {
-        if (useWeeklyRotation) {
-          // Escala Corrida / Modelo A (Rotação Semanal entre as 7 equipes)
-          daysOff[d] = isTeamOffInWeeklyRotation(teamId, year, month, d);
-        } else if (scaleType === '5x2') {
-          // Em 5x2 Fixa: 2 folgas consecutivas (uma atrás da outra)
-          daysOff[d] =
-            ((d - firstOffDay) % 7 + 7) % 7 === 0 ||
-            ((d - (firstOffDay + 1)) % 7 + 7) % 7 === 0;
-        } else {
-          daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
-        }
+  teamGroups.forEach(({ teamId, memberIds }) => {
+    let firstOffDay = getInitialTeamOffDay(teamId, numTeams, scaleType, customTeamOffDays);
+    if (scaleType === '5x2' && numTeams === 7 && rotationMode !== 'fixed' && !customTeamOffDays?.[teamId]) {
+      firstOffDay = ((teamId + monthOffset) % 7) + 1;
+    }
+
+    const daysOff: Record<number, boolean> = {};
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (scaleType === '5x2') {
+        // Em 5x2: rigorosamente 2 folgas consecutivas a cada 7 dias (nunca 3 ou 4 folgas)
+        daysOff[d] =
+          ((d - firstOffDay) % 7 + 7) % 7 === 0 ||
+          ((d - (firstOffDay + 1)) % 7 + 7) % 7 === 0;
+      } else {
+        daysOff[d] = ((d - firstOffDay) % cycleLen + cycleLen) % cycleLen === 0;
       }
-      schedule[empId] = daysOff;
+    }
+
+    // Todos os membros da mesma equipe recebem RIGOROSAMENTE a mesma escala
+    memberIds.forEach((empId) => {
+      schedule[empId] = { ...daysOff };
     });
 
     // Distribuição de folga compensatória dominical em 5x1/6x1 para quem ficou com 0 domingos
