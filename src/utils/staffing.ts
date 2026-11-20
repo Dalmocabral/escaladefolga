@@ -349,12 +349,14 @@ function computeCategoryRow(
   if (!monthSchedule) {
     let scaleType: ScaleType = roleName.toLowerCase() === 'motorista' ? '5x2' : '5x1';
     let numTeams = roleName.toLowerCase() === 'motorista' ? 6 : catEmployees.length >= 20 ? 6 : 3;
+    let rotationMode: 'fixed' | 'weekly_rotation' | undefined;
     try {
       const savedSettings = localStorage.getItem(storageKeySettings);
       if (savedSettings) {
         const s = JSON.parse(savedSettings);
         if (s.scaleType) scaleType = s.scaleType;
         if (s.numTeams) numTeams = s.numTeams;
+        if (s.rotationMode) rotationMode = s.rotationMode;
       }
     } catch {
       // defaults
@@ -368,7 +370,9 @@ function computeCategoryRow(
       roleName,
       numTeams,
       scaleType,
-      savedAssignments
+      savedAssignments,
+      undefined,
+      rotationMode
     );
   }
 

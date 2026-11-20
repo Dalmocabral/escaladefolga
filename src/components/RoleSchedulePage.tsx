@@ -16,6 +16,7 @@ import {
   computeTeamContinuityOffDays,
   buildTeamMonthOffDays,
   buildInitialSchedule,
+  isTeamOffInWeeklyRotation,
   TEAMS,
   type TeamConfig,
 } from '../utils/teams';
@@ -1243,7 +1244,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         );
       }
 
-      const teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
+      const useWeeklyRotation =
+        effectiveScaleType === '5x2' &&
+        (cfg.rotationMode === 'weekly_rotation' || (cfg.rotationMode !== 'fixed' && cfg.numTeams === 7));
+
+      let teamDays: Record<number, boolean>;
+      if (useWeeklyRotation) {
+        teamDays = {};
+        for (let d = 1; d <= daysInTarget; d++) {
+          teamDays[d] = isTeamOffInWeeklyRotation(team.id, targetYear, targetMonth, d);
+        }
+      } else {
+        teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
+      }
 
       members.forEach((emp) => {
         newMonthData[emp.id] = { ...teamDays };

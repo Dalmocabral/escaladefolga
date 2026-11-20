@@ -22,6 +22,9 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
 }) => {
   const [scaleType, setScaleType] = useState<ScaleType>(currentSettings.scaleType);
   const [numTeams, setNumTeams] = useState<number>(currentSettings.numTeams);
+  const [rotationMode, setRotationMode] = useState<'fixed' | 'weekly_rotation'>(
+    currentSettings.rotationMode || 'weekly_rotation'
+  );
   const [offDayMode, setOffDayMode] = useState<'auto' | 'manual'>(
     currentSettings.offDayMode || 'auto'
   );
@@ -33,6 +36,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
       3: 4,
       4: 5,
       5: 6,
+      6: 7,
     }
   );
 
@@ -40,6 +44,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
     if (isOpen) {
       setScaleType(currentSettings.scaleType);
       setNumTeams(currentSettings.numTeams);
+      setRotationMode(currentSettings.rotationMode || (currentSettings.numTeams === 7 ? 'weekly_rotation' : 'weekly_rotation'));
       setOffDayMode(currentSettings.offDayMode || 'auto');
       if (currentSettings.customTeamOffDays) {
         setCustomTeamOffDays(currentSettings.customTeamOffDays);
@@ -75,6 +80,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
       numTeams,
       offDayMode,
       customTeamOffDays: offDayMode === 'manual' ? customTeamOffDays : undefined,
+      rotationMode: scaleType === '5x2' ? rotationMode : undefined,
     });
     onClose();
   };
@@ -143,19 +149,24 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              {[2, 3, 4, 5, 6].map((count) => (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              {[2, 3, 4, 5, 6, 7].map((count) => (
                 <button
                   key={count}
                   type="button"
-                  onClick={() => setNumTeams(count)}
-                  className={`flex-1 py-2 text-xs font-bold rounded-xl border transition ${
+                  onClick={() => {
+                    setNumTeams(count);
+                    if (scaleType === '5x2' && count === 7) {
+                      setRotationMode('weekly_rotation');
+                    }
+                  }}
+                  className={`flex-1 min-w-[55px] py-2 text-xs font-bold rounded-xl border transition ${
                     numTeams === count
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  {count} Equipes
+                  {count} Eq.
                 </button>
               ))}
             </div>
@@ -166,23 +177,73 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 <Users className="w-3.5 h-3.5 text-slate-500" />
                 Distribuição Automática ({totalEmployees} colaboradores):
               </span>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5">
                 {preview.map(({ team, count }) => (
                   <div
                     key={team.id}
-                    className="p-2 rounded-lg bg-white border border-slate-200 text-center shadow-2xs"
+                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-center shadow-2xs"
                   >
-                    <span className="text-[10px] font-bold text-slate-500 block truncate">
+                    <span className="text-[9px] font-bold text-slate-500 block truncate">
                       {team.name}
                     </span>
-                    <span className="text-sm font-extrabold text-slate-900">
-                      {count} <span className="text-[10px] font-normal text-slate-400">colab.</span>
+                    <span className="text-xs font-extrabold text-slate-900">
+                      {count} <span className="text-[9px] font-normal text-slate-400">colab.</span>
                     </span>
                   </div>
                 ))}
               </div>
             </div>
           </div>
+
+          {/* Opção Específica para Escala 5x2: Modelo A (Escala Corrida) vs Fixa */}
+          {scaleType === '5x2' && (
+            <div className="pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  Comportamento da Escala 5x2
+                </label>
+                <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  {rotationMode === 'weekly_rotation' ? '🔄 Modelo A: Rotação Semanal' : '📌 Escala Fixa'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRotationMode('weekly_rotation')}
+                  className={`p-3 rounded-xl border text-left transition ${
+                    rotationMode === 'weekly_rotation'
+                      ? 'border-indigo-600 bg-indigo-50/80 text-indigo-950 ring-2 ring-indigo-500/20'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <span>🔄 Modelo A (Escala Corrida)</span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 mt-1 leading-tight font-medium">
+                    Rodízio de 7 semanas onde as equipes revezam folgas semanalmente. Todos passam por finais de semana e ninguém ultrapassa 6 dias trabalhados.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRotationMode('fixed')}
+                  className={`p-3 rounded-xl border text-left transition ${
+                    rotationMode === 'fixed'
+                      ? 'border-blue-600 bg-blue-50/80 text-blue-950 ring-2 ring-blue-500/20'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>📌 Escala Fixa</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1 leading-tight">
+                    Folgas sempre nos mesmos 2 dias da semana para cada equipe (ex: sempre Sáb/Dom, sempre Seg/Ter).
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 3. Modo de Definição das Folgas (Automático ou Manual) */}
           <div className="pt-2 border-t border-slate-100">

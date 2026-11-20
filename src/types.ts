@@ -41,6 +41,7 @@ export interface CategoryScheduleSettings {
   numTeams: number;
   offDayMode?: 'auto' | 'manual';
   customTeamOffDays?: Record<number, number>; // teamId -> primeiro dia de folga (1..7)
+  rotationMode?: 'fixed' | 'weekly_rotation'; // Em 5x2: fixo ou escala corrida semanal (Modelo A)
 }
 
 export interface GenerateFolgaOptions {
