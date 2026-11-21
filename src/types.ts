@@ -37,13 +37,14 @@ export interface Employee {
 export type DayScheduleValue = boolean | string;
 
 export type OffDayStyle = 'consecutive' | 'interleaved';
+export type RotationMode = 'fixed' | 'weekly_rotation';
 
 export interface CategoryScheduleSettings {
   scaleType: ScaleType;
   numTeams: number;
   offDayMode?: 'auto' | 'manual';
   customTeamOffDays?: Record<number, number>; // teamId -> primeiro dia de folga (1..7)
-  rotationMode?: 'fixed' | 'weekly_rotation'; // Em 5x2: fixo ou escala corrida semanal (Modelo A)
+  rotationMode?: RotationMode; // Em 5x2: fixo ou escala corrida semanal (Modelo A)
   offDayStyle?: OffDayStyle; // 'consecutive' (2 juntas) ou 'interleaved' (3x1 + 2x1 separadas)
 }
 

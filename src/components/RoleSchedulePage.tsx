@@ -17,8 +17,8 @@ import {
   computeTeamContinuityOffDays,
   buildTeamMonthOffDays,
   buildInitialSchedule,
-  isTeamOff5x2Continuous,
-  isTeamOff5x2Interleaved,
+  enforce5x2TeamContinuity,
+  isTeamOff5x2,
   TEAMS,
   type TeamConfig,
 } from '../utils/teams';
@@ -415,23 +415,37 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               (id) => !newEmpIds.includes(id) && monthSchedule[id]
             );
 
-            let teamFirstOff = getInitialTeamOffDay(teamId, settings.numTeams, mScale);
-
-            if (existingMemberId && monthSchedule[existingMemberId]) {
-              const existingOffs = monthSchedule[existingMemberId];
-              for (let d = 1; d <= 7; d++) {
-                if (existingOffs[d] === true) {
-                  teamFirstOff = d;
-                  break;
-                }
-              }
-            }
+            const teamFirstOff = getInitialTeamOffDay(
+              teamId,
+              settings.numTeams,
+              mScale,
+              settings.customTeamOffDays
+            );
+            const existingOffs = existingMemberId ? monthSchedule[existingMemberId] : undefined;
+            const monthOffDayStyle = monthlyOffDayStyles[mKey] || settings.offDayStyle || 'consecutive';
 
             newEmpIds.forEach((empId) => {
               if (!monthSchedule[empId]) {
                 const empDays: Record<number, boolean> = {};
                 for (let d = 1; d <= daysInM; d++) {
-                  if (mScale === '5x2') {
+                  const existingValue = existingOffs?.[d];
+                  if (existingValue === true || existingValue === 'FOLGA') {
+                    empDays[d] = true;
+                  } else if (existingValue === false || existingValue === 'TRABALHO') {
+                    empDays[d] = false;
+                  } else if (
+                    mScale === '5x2' &&
+                    (monthOffDayStyle === 'interleaved' || settings.customTeamOffDays?.[teamId] === undefined)
+                  ) {
+                    empDays[d] = isTeamOff5x2(
+                      y,
+                      m,
+                      d,
+                      teamId,
+                      settings.rotationMode ?? 'weekly_rotation',
+                      monthOffDayStyle
+                    );
+                  } else if (mScale === '5x2') {
                     empDays[d] =
                       ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
                       ((d - (teamFirstOff + 1)) % 7 + 7) % 7 === 0;
@@ -468,7 +482,17 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     if (needsUpdate) {
       setTeamAssignments(sanitized);
     }
-  }, [categoryEmployees, settings.numTeams, teamAssignments, settings.scaleType]);
+  }, [
+    categoryEmployees,
+    monthlyOffDayStyles,
+    monthlyScaleTypes,
+    settings.customTeamOffDays,
+    settings.numTeams,
+    settings.offDayStyle,
+    settings.rotationMode,
+    settings.scaleType,
+    teamAssignments,
+  ]);
 
   // 5. Stored schedules by month: key "YYYY-M" -> empId -> dayNumber -> boolean (true = Folga)
   // Carrega todas as escalas gravadas no banco de dados local
@@ -493,8 +517,6 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       if (savedAss) savedAssignments = JSON.parse(savedAss);
     } catch {}
 
-    const initialNumTeams = isMotorista ? 6 : categoryEmployees.length >= 20 ? 6 : 3;
-    const initialScale: ScaleType = isMotorista ? '5x2' : '5x1';
     return {
       '2026-10': buildInitialSchedule(
         2026,
@@ -502,9 +524,12 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         employees,
         shift.id,
         roleName,
-        initialNumTeams,
-        initialScale,
-        savedAssignments
+        settings.numTeams,
+        settings.scaleType,
+        savedAssignments,
+        settings.customTeamOffDays,
+        settings.rotationMode,
+        settings.offDayStyle
       ),
     };
   });
@@ -648,8 +673,39 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         let teamHasAnomaly = false;
         let referenceSchedule: Record<number, boolean | string> | null = null;
 
-        // Se for 5x2 contínua com 7 equipes (Modelo A semanal), valida diretamente se todos os dias seguem a rotação semanal
-        if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
+        const previousMonthDate = new Date(y, m, 0);
+        const previousMonthKey = `${previousMonthDate.getFullYear()}-${previousMonthDate.getMonth()}`;
+        const previousMonthData = monthlySchedules[previousMonthKey];
+        const previousMonthDays = previousMonthDate.getDate();
+        const previousMonthStyle = monthlyOffDayStyles[previousMonthKey] || settings.offDayStyle || 'consecutive';
+        const hasPreviousMonthOverrides = Boolean(previousMonthData) && members.some((member) => {
+          const previousSchedule = previousMonthData?.[member.id];
+          if (!previousSchedule) return false;
+          for (let d = 1; d <= previousMonthDays; d++) {
+            const value = previousSchedule[d];
+            if (typeof value === 'string' && value !== 'FOLGA' && value !== 'TRABALHO') continue;
+            const actualOff = value === true || value === 'FOLGA';
+            const expectedOff = isTeamOff5x2(
+              previousMonthDate.getFullYear(),
+              previousMonthDate.getMonth(),
+              d,
+              team.id,
+              settings.rotationMode ?? 'weekly_rotation',
+              previousMonthStyle
+            );
+            if (actualOff !== expectedOff) return true;
+          }
+          return false;
+        });
+
+        // Alterações reais no mês anterior são preservadas; a geração seguinte faz apenas o ajuste de continuidade necessário.
+        if (hasPreviousMonthOverrides) return;
+
+        // Valida os padrões automáticos rotativos para qualquer quantidade de equipes.
+        if (
+          (monthOffDayStyle === 'interleaved' || settings.rotationMode !== 'fixed') &&
+          settings.customTeamOffDays?.[team.id] === undefined
+        ) {
           for (const member of members) {
             const empDays = updatedMonthData[member.id];
             if (!empDays) {
@@ -657,10 +713,14 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
               break;
             }
             for (let d = 1; d <= daysInM; d++) {
-              const expectedOff =
-                monthOffDayStyle === 'interleaved'
-                  ? isTeamOff5x2Interleaved(y, m, d, team.id)
-                  : isTeamOff5x2Continuous(y, m, d, team.id);
+              const expectedOff = isTeamOff5x2(
+                y,
+                m,
+                d,
+                team.id,
+                settings.rotationMode ?? 'weekly_rotation',
+                monthOffDayStyle
+              );
               const val = empDays[d];
               if (typeof val === 'string' && val !== 'FOLGA' && val !== 'TRABALHO') {
                 // Afastamento especial (FÉRIAS, ATESTADO, etc.): preserva
@@ -736,13 +796,19 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         if (teamHasAnomaly) {
           monthHasChanges = true;
           const cleanTeamDays: Record<number, boolean> = {};
-          if (monthOffDayStyle === 'interleaved') {
+          if (
+            monthOffDayStyle === 'interleaved' ||
+            (settings.rotationMode !== 'fixed' && settings.customTeamOffDays?.[team.id] === undefined)
+          ) {
             for (let d = 1; d <= daysInM; d++) {
-              cleanTeamDays[d] = isTeamOff5x2Interleaved(y, m, d, team.id);
-            }
-          } else if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
-            for (let d = 1; d <= daysInM; d++) {
-              cleanTeamDays[d] = isTeamOff5x2Continuous(y, m, d, team.id);
+              cleanTeamDays[d] = isTeamOff5x2(
+                y,
+                m,
+                d,
+                team.id,
+                settings.rotationMode ?? 'weekly_rotation',
+                monthOffDayStyle
+              );
             }
           } else {
             const defaultFirstOff = getInitialTeamOffDay(
@@ -780,7 +846,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     if (hasChanges) {
       setMonthlySchedules(updatedSchedules);
     }
-  }, [distributedTeams, monthlyScaleTypes, settings]);
+  }, [distributedTeams, monthlyScaleTypes, monthlyOffDayStyles, settings]);
 
   // 4. Modals state
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -1138,18 +1204,42 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         const next = { ...prev };
         const monthSchedule = { ...(next[currentMonthKey] || {}) };
         const mScale = monthlyScaleTypes[currentMonthKey] || settings.scaleType;
+        const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+        const monthOffDayStyle = monthlyOffDayStyles[currentMonthKey] || settings.offDayStyle || 'consecutive';
+        const referenceMemberId = nextAssignments[targetTeamId]?.find(
+          (id) => id !== sourceEmpId && monthSchedule[id]
+        );
+        const referenceSchedule = referenceMemberId ? monthSchedule[referenceMemberId] : undefined;
 
-        // Padrão de dias de folga da equipe de destino (sincronizado e puro)
+        // Usa as folgas já existentes no time de destino, se houver.
         const firstOff = getInitialTeamOffDay(
           targetTeamId,
           settings.numTeams,
-          mScale
+          mScale,
+          settings.customTeamOffDays
         );
         const cycleLen =
           mScale === '5x1' ? 6 : mScale === '5x2' ? 7 : mScale === '6x1' ? 7 : 2;
         const destPattern: Record<number, boolean> = {};
-        for (let d = 1; d <= 31; d++) {
-          if (mScale === '5x2') {
+        for (let d = 1; d <= daysInMonth; d++) {
+          const existingValue = referenceSchedule?.[d];
+          if (existingValue === true || existingValue === 'FOLGA') {
+            destPattern[d] = true;
+          } else if (existingValue === false || existingValue === 'TRABALHO') {
+            destPattern[d] = false;
+          } else if (
+            mScale === '5x2' &&
+            (monthOffDayStyle === 'interleaved' || settings.customTeamOffDays?.[targetTeamId] === undefined)
+          ) {
+            destPattern[d] = isTeamOff5x2(
+              viewYear,
+              viewMonth,
+              d,
+              targetTeamId,
+              settings.rotationMode ?? 'weekly_rotation',
+              monthOffDayStyle
+            );
+          } else if (mScale === '5x2') {
             destPattern[d] =
               ((d - firstOff) % 7 + 7) % 7 === 0 ||
               ((d - (firstOff + 1)) % 7 + 7) % 7 === 0;
@@ -1421,15 +1511,20 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
       let teamDays: Record<number, boolean> = {};
 
-      if (effectiveScaleType === '5x2' && effectiveOffDayStyle === 'interleaved') {
-        // Escala 5x2 Intercalada (3x1 + 2x1 corrida rotativa): folgas separadas e perfeitamente balanceadas
-        for (let d = 1; d <= daysInTarget; d++) {
-          teamDays[d] = isTeamOff5x2Interleaved(targetYear, targetMonth, d, team.id);
-        }
-      } else if (effectiveScaleType === '5x2' && cfg.numTeams === 7 && cfg.rotationMode !== 'fixed' && !cfg.customTeamOffDays?.[team.id]) {
-        // Escala Corrida Contínua 5x2 Consecutiva com 7 equipes: distribuição perfeita determinística
-        for (let d = 1; d <= daysInTarget; d++) {
-          teamDays[d] = isTeamOff5x2Continuous(targetYear, targetMonth, d, team.id);
+        if (
+          effectiveScaleType === '5x2' &&
+          (effectiveOffDayStyle === 'interleaved' || cfg.customTeamOffDays?.[team.id] === undefined)
+        ) {
+          // Mantém o padrão semanal estável entre meses e aplica rotação semanal quando configurada.
+          for (let d = 1; d <= daysInTarget; d++) {
+            teamDays[d] = isTeamOff5x2(
+              targetYear,
+              targetMonth,
+              d,
+              team.id,
+              cfg.rotationMode ?? 'weekly_rotation',
+              effectiveOffDayStyle
+            );
         }
       } else {
         // CÁLCULO DE CONTINUIDADE REAL DA EQUIPE:
@@ -1449,6 +1544,15 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         }
 
         teamDays = buildTeamMonthOffDays(daysInTarget, effectiveScaleType, continuity);
+      }
+
+      if (effectiveScaleType === '5x2' && mode === 'continuidade' && prevMonthData) {
+        teamDays = enforce5x2TeamContinuity(
+          teamDays,
+          memberIds,
+          prevMonthData,
+          prevMonthTotalDays
+        );
       }
 
       // TODOS os membros da mesma equipe recebem RIGOROSAMENTE a mesma escala
@@ -1569,7 +1673,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         : '';
     const modeLabel =
       options.mode === 'continuidade'
-        ? `com continuidade perfeita (ciclo ininterrupto e máx. 6 dias)`
+        ? `com continuidade entre meses e proteção para não estender sequências no novo mês acima de 6 dias`
         : 'como nova escala';
     showToast(
       `✨ Escala ${scaleName}${styleDesc} gerada ${modeLabel} para ${MONTH_NAMES[options.targetMonth]}/${options.targetYear}!`
@@ -1640,10 +1744,15 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
     const fallbackDays: Record<number, boolean> = {};
     for (let d = 1; d <= dateColumns.length; d++) {
       if (currentViewScaleType === '5x2') {
-        if (currentViewOffDayStyle === 'interleaved') {
-          fallbackDays[d] = isTeamOff5x2Interleaved(viewYear, viewMonth, d, teamId);
-        } else if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[teamId]) {
-          fallbackDays[d] = isTeamOff5x2Continuous(viewYear, viewMonth, d, teamId);
+        if (currentViewOffDayStyle === 'interleaved' || settings.customTeamOffDays?.[teamId] === undefined) {
+          fallbackDays[d] = isTeamOff5x2(
+            viewYear,
+            viewMonth,
+            d,
+            teamId,
+            settings.rotationMode ?? 'weekly_rotation',
+            currentViewOffDayStyle
+          );
         } else {
           fallbackDays[d] =
             ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||
@@ -2174,10 +2283,15 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                         const fallbackDays: Record<number, boolean> = {};
                         for (let d = 1; d <= dateColumns.length; d++) {
                           if (currentViewScaleType === '5x2') {
-                            if (currentViewOffDayStyle === 'interleaved') {
-                              fallbackDays[d] = isTeamOff5x2Interleaved(viewYear, viewMonth, d, team.id);
-                            } else if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
-                              fallbackDays[d] = isTeamOff5x2Continuous(viewYear, viewMonth, d, team.id);
+                            if (currentViewOffDayStyle === 'interleaved' || settings.customTeamOffDays?.[team.id] === undefined) {
+                              fallbackDays[d] = isTeamOff5x2(
+                                viewYear,
+                                viewMonth,
+                                d,
+                                team.id,
+                                settings.rotationMode ?? 'weekly_rotation',
+                                currentViewOffDayStyle
+                              );
                             } else {
                               fallbackDays[d] =
                                 ((d - teamFirstOff) % 7 + 7) % 7 === 0 ||

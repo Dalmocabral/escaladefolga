@@ -79,11 +79,13 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const effectiveOffDayMode =
+      scaleType === '5x2' && offDayStyle === 'interleaved' ? 'auto' : offDayMode;
     onSave({
       scaleType,
       numTeams,
-      offDayMode,
-      customTeamOffDays: offDayMode === 'manual' ? customTeamOffDays : undefined,
+      offDayMode: effectiveOffDayMode,
+      customTeamOffDays: effectiveOffDayMode === 'manual' ? customTeamOffDays : undefined,
       rotationMode: scaleType === '5x2' ? rotationMode : undefined,
       offDayStyle: scaleType === '5x2' ? offDayStyle : undefined,
     });
@@ -226,7 +228,9 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                     <span>🔄 Modelo A (Escala Corrida)</span>
                   </div>
                   <div className="text-[10px] text-slate-600 mt-1 leading-tight font-medium">
-                    Rodízio de 7 semanas onde as equipes revezam folgas semanalmente. Todos passam por finais de semana e ninguém ultrapassa 6 dias trabalhados.
+                    As equipes mudam o par de folgas a cada semana. {numTeams === 7
+                      ? 'Com 7 equipes, 2 folgam e 5 trabalham todos os dias; todas percorrem os pares em 7 semanas.'
+                      : 'Com menos de 7 equipes, as folgas também giram, mas a cobertura diária varia. 7 equipes dão o balanceamento mais regular.'} Ninguém passa de 6 dias trabalhados seguidos.
                   </div>
                 </button>
 
@@ -243,7 +247,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                     <span>📌 Escala Fixa</span>
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1 leading-tight">
-                    Folgas sempre nos mesmos 2 dias da semana para cada equipe (ex: sempre Sáb/Dom, sempre Seg/Ter).
+                    Mantém o mesmo par de dias da semana para cada equipe em todos os meses.
                   </div>
                 </button>
               </div>
@@ -290,7 +294,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                       <span>🔀 Folgas Intercaladas</span>
                     </div>
                     <div className="text-[10px] text-slate-600 mt-1 leading-tight font-medium">
-                      2 folgas separadas na semana (ex: Qua e Dom / 3x1 + 2x1). Máx. 3 dias seguidos.
+                      2 folgas separadas (ex: Qua e Dom). Máximo de 3 dias seguidos no modo fixo e 4 na rotação semanal.
                     </div>
                   </button>
                 </div>
@@ -305,7 +309,9 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 Definição das Folgas das Equipes
               </label>
               <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                {offDayMode === 'manual' ? '✏️ Modo Manual Ativo' : '🔄 Modo Automático'}
+                {offDayMode === 'manual' && !(scaleType === '5x2' && offDayStyle === 'interleaved')
+                  ? '✏️ Modo Manual Ativo'
+                  : '🔄 Modo Automático'}
               </span>
             </div>
 
@@ -328,8 +334,9 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
               <button
                 type="button"
                 onClick={() => setOffDayMode('manual')}
+                disabled={scaleType === '5x2' && offDayStyle === 'interleaved'}
                 className={`p-2.5 rounded-xl border text-left transition ${
-                  offDayMode === 'manual'
+                  offDayMode === 'manual' && !(scaleType === '5x2' && offDayStyle === 'interleaved')
                     ? 'border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-500/20 font-bold'
                     : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                 }`}
@@ -342,7 +349,13 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
             </div>
 
             {/* Painel de Configuração Manual por Equipe */}
-            {offDayMode === 'manual' && (
+            {offDayMode === 'manual' && scaleType === '5x2' && offDayStyle === 'interleaved' && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+                Folgas intercaladas usam o padrão automático. Para personalizar dias por equipe, escolha folgas consecutivas.
+              </p>
+            )}
+
+            {offDayMode === 'manual' && !(scaleType === '5x2' && offDayStyle === 'interleaved') && (
               <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
                 <span className="text-[11px] font-bold text-amber-900 block">
                   Escolha o 1º dia de folga no mês de cada equipe:
@@ -384,7 +397,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                 </div>
                 <p className="text-[10px] text-amber-800 leading-tight">
                   {scaleType === '5x2'
-                    ? '💡 Em escala 5x2, ao escolher o Dia X, a equipe folga os dias X e X+1 seguidos a cada 7 dias.'
+                    ? '💡 Modo manual: a equipe folga o Dia X e X+1 a cada 7 datas; isso substitui o rodízio semanal. Use o modo automático para folgas rotativas.'
                     : '💡 As folgas da equipe se repetirão a cada ciclo com base no primeiro dia escolhido.'}
                 </p>
               </div>

@@ -1,4 +1,4 @@
-import type { ShiftConfig, Employee, EmployeeLeave, ScaleType } from '../types';
+import type { ShiftConfig, Employee, EmployeeLeave, OffDayStyle, ScaleType } from '../types';
 import { buildInitialSchedule, TEAMS } from './teams';
 
 export interface StaffingCategoryConfig {
@@ -356,6 +356,8 @@ function computeCategoryRow(
     let scaleType: ScaleType = roleName.toLowerCase() === 'motorista' ? '5x2' : '5x1';
     let numTeams = roleName.toLowerCase() === 'motorista' ? 6 : catEmployees.length >= 20 ? 6 : 3;
     let rotationMode: 'fixed' | 'weekly_rotation' | undefined;
+    let offDayStyle: OffDayStyle = 'consecutive';
+    let customTeamOffDays: Record<number, number> | undefined;
     try {
       const savedSettings = localStorage.getItem(storageKeySettings);
       if (savedSettings) {
@@ -363,6 +365,8 @@ function computeCategoryRow(
         if (s.scaleType) scaleType = s.scaleType;
         if (s.numTeams) numTeams = s.numTeams;
         if (s.rotationMode) rotationMode = s.rotationMode;
+        if (s.offDayStyle) offDayStyle = s.offDayStyle;
+        if (s.customTeamOffDays) customTeamOffDays = s.customTeamOffDays;
       }
     } catch {
       // defaults
@@ -377,8 +381,9 @@ function computeCategoryRow(
       numTeams,
       scaleType,
       savedAssignments,
-      undefined,
-      rotationMode
+      customTeamOffDays,
+      rotationMode,
+      offDayStyle
     );
   }
 
