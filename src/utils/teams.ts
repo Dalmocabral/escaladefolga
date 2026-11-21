@@ -1,4 +1,4 @@
-import type { ScaleType, Employee } from '../types';
+import type { ScaleType, Employee, OffDayStyle } from '../types';
 
 export interface TeamConfig {
   id: number;
@@ -511,6 +511,41 @@ export function isTeamOff5x2Continuous(
 }
 
 /**
+ * Pares de folgas semanais intercaladas para a Escala 5x2 (3x1 + 2x1 corrida rotativa).
+ * (0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado).
+ * Cada par separa as duas folgas por intervalos de 2 e 3 dias de trabalho (máx. 3 dias seguidos de trabalho).
+ * Em todos os 7 dias da semana, rigorosamente 2 equipes folgam e 5 equipes trabalham.
+ */
+export const INTERLEAVED_PAIRS_5X2: [number, number][] = [
+  [3, 0], // Par 0: Quarta e Domingo
+  [4, 1], // Par 1: Quinta e Segunda
+  [5, 2], // Par 2: Sexta e Terça
+  [6, 3], // Par 3: Sábado e Quarta
+  [0, 4], // Par 4: Domingo e Quinta
+  [1, 5], // Par 5: Segunda e Sexta
+  [2, 6], // Par 6: Terça e Sábado
+];
+
+/**
+ * Determina se a equipe está de folga em uma data específica no regime contínuo 5x2 INTERCALADO (3x1 + 2x1).
+ * As folgas não são consecutivas: ocorrem separadas na semana (ex: Quarta e Domingo, etc.).
+ * Mantém rotação mensal de equipes de modo que todas passem pelos fins de semana e nunca trabalhem > 3 dias seguidos.
+ */
+export function isTeamOff5x2Interleaved(
+  year: number,
+  month: number,
+  day: number,
+  teamId: number
+): boolean {
+  // Deslocamento mensal ancorado em Novembro/2026 (year=2026, month=10)
+  const monthIndex = (year * 12 + month) - (2026 * 12 + 10);
+  const pairIdx = (((teamId + monthIndex) % 7) + 7) % 7;
+  const pair = INTERLEAVED_PAIRS_5X2[pairIdx];
+  const dow = new Date(year, month, day).getDay();
+  return pair[0] === dow || pair[1] === dow;
+}
+
+/**
  * Constrói a escala inicial do mês para uma categoria quando não há escala salva no localStorage.
  */
 export function buildInitialSchedule(
@@ -523,7 +558,8 @@ export function buildInitialSchedule(
   scaleType: ScaleType,
   savedAssignments?: Record<number, string[]>,
   customTeamOffDays?: Record<number, number>,
-  rotationMode?: 'fixed' | 'weekly_rotation'
+  rotationMode?: 'fixed' | 'weekly_rotation',
+  offDayStyle?: OffDayStyle
 ): Record<string, Record<number, boolean>> {
   const schedule: Record<string, Record<number, boolean>> = {};
   const catEmployees = employees.filter(
@@ -568,7 +604,9 @@ export function buildInitialSchedule(
 
     const daysOff: Record<number, boolean> = {};
     for (let d = 1; d <= daysInMonth; d++) {
-      if (scaleType === '5x2' && numTeams === 7 && rotationMode !== 'fixed' && !customTeamOffDays?.[teamId]) {
+      if (scaleType === '5x2' && offDayStyle === 'interleaved') {
+        daysOff[d] = isTeamOff5x2Interleaved(year, month, d, teamId);
+      } else if (scaleType === '5x2' && numTeams === 7 && rotationMode !== 'fixed' && !customTeamOffDays?.[teamId]) {
         daysOff[d] = isTeamOff5x2Continuous(year, month, d, teamId);
       } else if (scaleType === '5x2') {
         // Em 5x2 Fixo: rigorosamente 2 folgas consecutivas a cada 7 dias

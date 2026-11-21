@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { CategoryScheduleSettings, ScaleType } from '../types';
+import type { CategoryScheduleSettings, ScaleType, OffDayStyle } from '../types';
 import { TEAMS } from '../utils/teams';
 import { X, Settings, Users, Check } from 'lucide-react';
 
@@ -25,6 +25,9 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
   const [rotationMode, setRotationMode] = useState<'fixed' | 'weekly_rotation'>(
     currentSettings.rotationMode || 'weekly_rotation'
   );
+  const [offDayStyle, setOffDayStyle] = useState<OffDayStyle>(
+    currentSettings.offDayStyle || 'consecutive'
+  );
   const [offDayMode, setOffDayMode] = useState<'auto' | 'manual'>(
     currentSettings.offDayMode || 'auto'
   );
@@ -45,6 +48,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
       setScaleType(currentSettings.scaleType);
       setNumTeams(currentSettings.numTeams);
       setRotationMode(currentSettings.rotationMode || (currentSettings.numTeams === 7 ? 'weekly_rotation' : 'weekly_rotation'));
+      setOffDayStyle(currentSettings.offDayStyle || 'consecutive');
       setOffDayMode(currentSettings.offDayMode || 'auto');
       if (currentSettings.customTeamOffDays) {
         setCustomTeamOffDays(currentSettings.customTeamOffDays);
@@ -81,6 +85,7 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
       offDayMode,
       customTeamOffDays: offDayMode === 'manual' ? customTeamOffDays : undefined,
       rotationMode: scaleType === '5x2' ? rotationMode : undefined,
+      offDayStyle: scaleType === '5x2' ? offDayStyle : undefined,
     });
     onClose();
   };
@@ -241,6 +246,54 @@ export const RoleScheduleConfigModal: React.FC<RoleScheduleConfigModalProps> = (
                     Folgas sempre nos mesmos 2 dias da semana para cada equipe (ex: sempre Sáb/Dom, sempre Seg/Ter).
                   </div>
                 </button>
+              </div>
+
+              {/* Formato das Folgas: Consecutivas vs Intercaladas */}
+              <div className="mt-3 pt-3 border-t border-slate-200/60">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                    Formato de Folgas na Semana
+                  </label>
+                  <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    {offDayStyle === 'interleaved' ? '🔀 Intercaladas (3x1 + 2x1)' : '👥 Consecutivas (2 juntas)'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOffDayStyle('consecutive')}
+                    className={`p-3 rounded-xl border text-left transition ${
+                      offDayStyle === 'consecutive'
+                        ? 'border-blue-600 bg-blue-50/80 text-blue-950 ring-2 ring-blue-500/20'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <span>👥 Folgas Consecutivas</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1 leading-tight">
+                      2 folgas seguidas por semana (ex: Seg e Ter, Sáb e Dom).
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOffDayStyle('interleaved')}
+                    className={`p-3 rounded-xl border text-left transition ${
+                      offDayStyle === 'interleaved'
+                        ? 'border-indigo-600 bg-indigo-50/80 text-indigo-950 ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <span>🔀 Folgas Intercaladas</span>
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1 leading-tight font-medium">
+                      2 folgas separadas na semana (ex: Qua e Dom / 3x1 + 2x1). Máx. 3 dias seguidos.
+                    </div>
+                  </button>
+                </div>
               </div>
             </div>
           )}

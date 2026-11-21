@@ -5,6 +5,7 @@ import type {
   ScaleType,
   CompensatorySundayMode,
   CompensatoryStrategy,
+  OffDayStyle,
 } from '../types';
 import { ALL_MONTHS, getAvailableYears } from '../constants';
 import {
@@ -22,6 +23,7 @@ interface GenerateFolgaModalProps {
   currentViewMonth: number;
   currentViewYear: number;
   scaleType: ScaleType;
+  currentOffDayStyle?: OffDayStyle;
   monthlySchedules: Record<string, Record<string, Record<number, boolean | string>>>;
   onConfirm: (options: GenerateFolgaOptions) => void;
 }
@@ -32,12 +34,14 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
   currentViewMonth,
   currentViewYear,
   scaleType,
+  currentOffDayStyle = 'consecutive',
   monthlySchedules,
   onConfirm,
 }) => {
   const [targetMonth, setTargetMonth] = useState(currentViewMonth);
   const [targetYear, setTargetYear] = useState(currentViewYear);
   const [targetScaleType, setTargetScaleType] = useState<ScaleType>(scaleType);
+  const [offDayStyle, setOffDayStyle] = useState<OffDayStyle>(currentOffDayStyle);
   const [mode, setMode] = useState<GenerationMode>('continuidade');
   const [compensatorySunday, setCompensatorySunday] = useState<CompensatorySundayMode>('auto');
   const compensatoryStrategy: CompensatoryStrategy = 'swap';
@@ -52,8 +56,9 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
       setTargetMonth(currentViewMonth);
       setTargetYear(currentViewYear);
       setTargetScaleType(scaleType);
+      setOffDayStyle(currentOffDayStyle || 'consecutive');
     }
-  }, [isOpen, currentViewMonth, currentViewYear, scaleType]);
+  }, [isOpen, currentViewMonth, currentViewYear, scaleType, currentOffDayStyle]);
 
   // Calcula dinamicamente se o mês imediatamente anterior ao targetMonth possui escala salva
   const prevMonthIndex = targetMonth === 0 ? 11 : targetMonth - 1;
@@ -83,6 +88,7 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
       targetYear,
       mode,
       targetScaleType,
+      offDayStyle: targetScaleType === '5x2' ? offDayStyle : undefined,
       compensatorySunday,
       compensatoryStrategy,
     });
@@ -175,7 +181,7 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
               >
                 <div>
                   <div className="font-bold text-xs text-slate-900">Escala 5x2</div>
-                  <div className="text-[10px] text-slate-500">5 dias de trabalho x 2 folgas consecutivas</div>
+                  <div className="text-[10px] text-slate-500">5 dias de trabalho x 2 folgas semanais</div>
                 </div>
                 {targetScaleType === '5x2' && <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />}
               </button>
@@ -196,6 +202,65 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
                 {targetScaleType === '5x1' && <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />}
               </button>
             </div>
+
+            {/* Sub-opção exclusiva para Escala 5x2: Consecutivas vs Intercaladas */}
+            {targetScaleType === '5x2' && (
+              <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🔄 Formato das Folgas 5x2</span>
+                  </span>
+                  <span className="text-[10px] font-semibold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded">
+                    {offDayStyle === 'interleaved' ? 'Intercaladas (3x1 + 2x1)' : 'Consecutivas (2 juntas)'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOffDayStyle('consecutive')}
+                    className={`p-2.5 rounded-lg border text-left transition flex items-start justify-between ${
+                      offDayStyle === 'consecutive'
+                        ? 'border-blue-600 bg-white ring-2 ring-blue-500/20 shadow-xs'
+                        : 'border-slate-200 bg-white/70 hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-xs text-slate-900">Folgas Consecutivas</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">
+                        2 folgas juntas por semana (ex: Seg e Ter, Sáb e Dom).
+                      </div>
+                    </div>
+                    {offDayStyle === 'consecutive' && (
+                      <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOffDayStyle('interleaved')}
+                    className={`p-2.5 rounded-lg border text-left transition flex items-start justify-between ${
+                      offDayStyle === 'interleaved'
+                        ? 'border-indigo-600 bg-white ring-2 ring-indigo-500/20 shadow-xs'
+                        : 'border-slate-200 bg-white/70 hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-xs text-indigo-950 flex items-center gap-1">
+                        <span>Folgas Intercaladas</span>
+                        <span className="text-[9px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded font-bold">Novo</span>
+                      </div>
+                      <div className="text-[10px] text-slate-600 mt-0.5 leading-snug">
+                        Folgas separadas na semana (ex: Qua e Dom / 3x1 + 2x1 corrida). Máx. 3 dias seguidos.
+                      </div>
+                    </div>
+                    {offDayStyle === 'interleaved' && (
+                      <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {hasPreviousMonthData && mode === 'continuidade' && (
               <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs text-indigo-950 flex items-start gap-2.5">

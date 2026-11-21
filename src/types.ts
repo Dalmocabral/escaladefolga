@@ -36,12 +36,15 @@ export interface Employee {
 
 export type DayScheduleValue = boolean | string;
 
+export type OffDayStyle = 'consecutive' | 'interleaved';
+
 export interface CategoryScheduleSettings {
   scaleType: ScaleType;
   numTeams: number;
   offDayMode?: 'auto' | 'manual';
   customTeamOffDays?: Record<number, number>; // teamId -> primeiro dia de folga (1..7)
   rotationMode?: 'fixed' | 'weekly_rotation'; // Em 5x2: fixo ou escala corrida semanal (Modelo A)
+  offDayStyle?: OffDayStyle; // 'consecutive' (2 juntas) ou 'interleaved' (3x1 + 2x1 separadas)
 }
 
 export interface GenerateFolgaOptions {
@@ -49,6 +52,7 @@ export interface GenerateFolgaOptions {
   targetYear: number;
   mode: GenerationMode;
   targetScaleType?: ScaleType;
+  offDayStyle?: OffDayStyle;
   compensatorySunday?: CompensatorySundayMode;
   compensatoryStrategy?: CompensatoryStrategy;
 }
