@@ -21,6 +21,7 @@ export const ROLES_LIST = [
   'Conferente de Navio',
   'Operador de Bloco',
   'Estivador',
+  'Material',
 ];
 
 export const EmployeeRegistrationPage: React.FC<EmployeeRegistrationPageProps> = ({

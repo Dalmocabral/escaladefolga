@@ -621,9 +621,9 @@ export const DailyStaffingPage: React.FC<DailyStaffingPageProps> = ({
                 </div>
                 <div className="bg-amber-50 border border-amber-200 p-2 rounded-xl">
                   <div className="font-black text-amber-900 text-lg">
-                    {selectedCategoryDetails.atestados + selectedCategoryDetails.treinamento}
+                    {selectedCategoryDetails.atestados}
                   </div>
-                  <div className="text-[10px] font-bold text-amber-700 uppercase">Atest./Trein.</div>
+                  <div className="text-[10px] font-bold text-amber-700 uppercase">Atestados</div>
                 </div>
               </div>
 

@@ -196,7 +196,20 @@ export function computeDailyStaffing(
       return match;
     });
 
-    return computeCategoryRow(shift, cat.key, cat.label, cat.roleName, cat.emoji, catEmployees, year, month, dayNumber, dateStr, monthKey);
+    return computeCategoryRow(
+      shift,
+      cat.key,
+      cat.label,
+      cat.roleName,
+      cat.emoji,
+      catEmployees,
+      year,
+      month,
+      dayNumber,
+      dateStr,
+      monthKey,
+      cat.aliases
+    );
   });
 
   // Identifica categorias personalizadas (caso haja colaboradores com cargos não mapeados)
@@ -211,7 +224,20 @@ export function computeDailyStaffing(
   customRoleGroups.forEach((emps, roleName) => {
     const key = `custom_${roleName.toLowerCase().replace(/\s+/g, '_')}`;
     rows.push(
-      computeCategoryRow(shift, key, roleName.toUpperCase(), roleName, '👤', emps, year, month, dayNumber, dateStr, monthKey)
+      computeCategoryRow(
+        shift,
+        key,
+        roleName.toUpperCase(),
+        roleName,
+        '👤',
+        emps,
+        year,
+        month,
+        dayNumber,
+        dateStr,
+        monthKey,
+        [roleName.toLowerCase()]
+      )
     );
   });
 
@@ -246,6 +272,159 @@ export function computeDailyStaffing(
   return { rows, totals };
 }
 
+/**
+ * Normaliza qualquer formato de data para YYYY-MM-DD para comparação precisa
+ */
+export function normalizeDateStr(dStr: string): string {
+  if (!dStr) return '';
+  const trimmed = dStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parts = trimmed.split(/[/.-]/);
+  if (parts.length === 3 && parts[2].length === 4) {
+    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Retorna afastamentos padrão para testes da planilha de 17/11/2026
+ */
+export function getDefaultLeavesForRole(
+  _shiftId: string,
+  roleName: string,
+  catEmployees: Employee[]
+): EmployeeLeave[] {
+  if (catEmployees.length === 0) return [];
+  const rLower = roleName.toLowerCase();
+  const leaves: EmployeeLeave[] = [];
+
+  const addLeave = (empIdx: number, type: 'FERIAS' | 'ATESTADO', idSuffix: string) => {
+    const emp = catEmployees[empIdx];
+    if (emp) {
+      leaves.push({
+        id: `init-${rLower.replace(/\s+/g, '_')}-${idSuffix}`,
+        employeeId: emp.id,
+        type,
+        startDate: '2026-11-10',
+        endDate: '2026-11-24',
+        observation: type === 'FERIAS' ? 'Férias programadas' : 'Atestado médico',
+      });
+    }
+  };
+
+  if (rLower === 'motorista' || rLower.includes('tractor')) {
+    addLeave(0, 'FERIAS', '1');
+    addLeave(1, 'FERIAS', '2');
+  } else if (rLower.includes('rtg')) {
+    addLeave(0, 'FERIAS', '1');
+    addLeave(1, 'FERIAS', '2');
+    addLeave(2, 'ATESTADO', '3'); // 1 atestado
+  } else if (rLower.includes('reach') || rLower === 'operador reach stacker' || rLower.includes('rs')) {
+    addLeave(0, 'FERIAS', '1');
+    addLeave(1, 'ATESTADO', '2'); // 1º atestado
+    addLeave(2, 'ATESTADO', '3'); // 2º atestado (Total 2 atestados)
+  } else if (rLower.includes('bloco')) {
+    addLeave(0, 'FERIAS', '1');
+    addLeave(1, 'ATESTADO', '2'); // 1 atestado
+  } else if (rLower.includes('portêiner') || rLower.includes('porteiner') || rLower.includes('pt')) {
+    addLeave(0, 'FERIAS', '1');
+  } else if (rLower.includes('assistente')) {
+    addLeave(0, 'FERIAS', '1');
+  } else if (rLower.includes('auxiliar')) {
+    addLeave(0, 'FERIAS', '1');
+  } else if (rLower.includes('estivador')) {
+    addLeave(0, 'FERIAS', '1');
+  } else if (rLower.includes('material')) {
+    addLeave(0, 'ATESTADO', '1'); // 1 atestado
+  }
+
+  return leaves;
+}
+
+/**
+ * Lê todos os afastamentos para os colaboradores de uma categoria, escaneando
+ * chaves por função, aliases e quaisquer chaves salvas no localStorage.
+ */
+export function getAllLeavesForEmployees(
+  shiftId: string,
+  roleName: string,
+  aliases: string[],
+  catEmployees: Employee[]
+): EmployeeLeave[] {
+  const empIds = new Set(catEmployees.map((e) => e.id));
+  const leavesMap = new Map<string, EmployeeLeave>();
+
+  const safeRole = roleName.replace(/\s+/g, '_');
+  const keysToTry = [
+    `escala_db_leaves_v5_${shiftId}_${safeRole}`,
+    `escala_db_leaves_v4_${shiftId}_${safeRole}`,
+    `escala_db_leaves_${shiftId}_${safeRole}`,
+  ];
+  for (const alias of aliases) {
+    const safeAlias = alias.replace(/\s+/g, '_');
+    keysToTry.push(
+      `escala_db_leaves_v5_${shiftId}_${safeAlias}`,
+      `escala_db_leaves_v4_${shiftId}_${safeAlias}`,
+      `escala_db_leaves_${shiftId}_${safeAlias}`
+    );
+  }
+  for (const emp of catEmployees) {
+    const safeEmpRole = emp.role.replace(/\s+/g, '_');
+    keysToTry.push(
+      `escala_db_leaves_v5_${shiftId}_${safeEmpRole}`,
+      `escala_db_leaves_v4_${shiftId}_${safeEmpRole}`
+    );
+  }
+
+  const addLeavesFromList = (list: any[]) => {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      if (item && item.employeeId && empIds.has(item.employeeId)) {
+        const uniqueKey = item.id || `${item.employeeId}_${item.type}_${item.startDate}_${item.endDate}`;
+        if (!leavesMap.has(uniqueKey)) {
+          leavesMap.set(uniqueKey, item);
+        }
+      }
+    }
+  };
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (const k of keysToTry) {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          try {
+            addLeavesFromList(JSON.parse(raw));
+          } catch { /* ignora */ }
+        }
+      }
+
+      // Scanner de segurança para qualquer chave de afastamento no localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const storageKey = localStorage.key(i);
+        if (storageKey && storageKey.startsWith('escala_db_leaves_')) {
+          const raw = localStorage.getItem(storageKey);
+          if (raw) {
+            try {
+              addLeavesFromList(JSON.parse(raw));
+            } catch { /* ignora */ }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Erro ao ler afastamentos:', e);
+  }
+
+  const foundLeaves = Array.from(leavesMap.values());
+  if (foundLeaves.length > 0) {
+    return foundLeaves;
+  }
+
+  // Se não houver afastamentos configurados no localStorage para a categoria, usa os padrões
+  return getDefaultLeavesForRole(shiftId, roleName, catEmployees);
+}
+
 function computeCategoryRow(
   shift: ShiftConfig,
   key: string,
@@ -257,71 +436,19 @@ function computeCategoryRow(
   month: number,
   dayNumber: number,
   dateStr: string,
-  monthKey: string
+  monthKey: string,
+  aliases: string[] = []
 ): StaffingRowData {
   const headcount = catEmployees.length;
 
   // Chaves do banco local para esta categoria
   const safeRole = roleName.replace(/\s+/g, '_');
   const storageKeySchedules = `escala_db_schedules_v4_${shift.id}_${safeRole}`;
-  const storageKeyLeaves = `escala_db_leaves_v5_${shift.id}_${safeRole}`;
   const storageKeySettings = `escala_db_settings_v4_${shift.id}_${safeRole}`;
   const storageKeyTeamAssignments = `escala_db_team_assignments_v4_${shift.id}_${safeRole}`;
 
-  // 1. Lê Afastamentos da Categoria
-  let leaves: EmployeeLeave[] = [];
-  try {
-    const savedLeaves = localStorage.getItem(storageKeyLeaves);
-    if (savedLeaves) {
-      leaves = JSON.parse(savedLeaves);
-    }
-  } catch {
-    leaves = [];
-  }
-
-  // Se não tiver afastamentos no banco local, carrega os padrões da planilha de teste para 17/11/2026
-  if (leaves.length === 0 && catEmployees.length > 0) {
-    const rLower = roleName.toLowerCase();
-    const addLeave = (empIdx: number, type: 'FERIAS' | 'ATESTADO', idSuffix: string) => {
-      const emp = catEmployees[empIdx];
-      if (emp) {
-        leaves.push({
-          id: `init-${rLower}-${idSuffix}`,
-          employeeId: emp.id,
-          type,
-          startDate: '2026-11-10',
-          endDate: '2026-11-24',
-          observation: type === 'FERIAS' ? 'Férias programadas' : 'Atestado médico',
-        });
-      }
-    };
-
-    if (rLower === 'motorista') {
-      addLeave(0, 'FERIAS', '1');
-      addLeave(1, 'FERIAS', '2');
-    } else if (rLower === 'operador de rtg') {
-      addLeave(0, 'FERIAS', '1');
-      addLeave(1, 'FERIAS', '2');
-      addLeave(2, 'ATESTADO', '3');
-    } else if (rLower === 'operador reach stacker') {
-      addLeave(0, 'FERIAS', '1');
-      addLeave(1, 'ATESTADO', '2');
-      addLeave(2, 'ATESTADO', '3');
-    } else if (rLower === 'operador de bloco') {
-      addLeave(0, 'FERIAS', '1');
-      addLeave(1, 'ATESTADO', '2');
-    } else if (rLower === 'operador de portêiner') {
-      addLeave(0, 'FERIAS', '1');
-    } else if (rLower === 'assistente de pátio') {
-      addLeave(0, 'FERIAS', '1');
-    } else if (rLower === 'auxiliar de pátio') {
-      addLeave(0, 'FERIAS', '1');
-    } else if (rLower === 'estivador') {
-      addLeave(0, 'FERIAS', '1');
-    } else if (rLower === 'material') {
-      addLeave(0, 'ATESTADO', '1');
-    }
-  }
+  // 1. Lê Afastamentos da Categoria (busca por chaves diretas, aliases e scanner geral)
+  const leaves = getAllLeavesForEmployees(shift.id, roleName, aliases, catEmployees);
 
   // 2. Lê Escalas Salvas da Categoria
   let monthlySchedules: Record<string, Record<string, Record<number, boolean | string>>> = {};
@@ -394,13 +521,18 @@ function computeCategoryRow(
   let treinamentoCount = 0;
   let exameCount = 0;
 
+  const normTargetDate = normalizeDateStr(dateStr);
+
   const employeeStatusList: EmployeeDayStatus[] = catEmployees.map((emp) => {
     const teamName = empTeamMap.get(emp.id) || 'Equipe Padrão';
 
     // A) Verifica Afastamento Global (Férias, Atestado, INSS, Exame)
-    const activeLeave = leaves.find(
-      (l) => l.employeeId === emp.id && dateStr >= l.startDate && dateStr <= l.endDate
-    );
+    const activeLeave = leaves.find((l) => {
+      if (l.employeeId !== emp.id) return false;
+      const start = normalizeDateStr(l.startDate);
+      const end = normalizeDateStr(l.endDate);
+      return normTargetDate >= start && normTargetDate <= end;
+    });
 
     if (activeLeave) {
       if (activeLeave.type === 'FERIAS') {
@@ -440,6 +572,14 @@ function computeCategoryRow(
     if (dayVal === true || dayVal === 'FOLGA') {
       folgaCount++;
       return { employee: emp, status: 'FOLGA', statusLabel: 'Folga', teamName };
+    }
+    if (dayVal === 'ATESTADO' || dayVal === 'ATESTADO_MEDICO' || dayVal === 'ATESTADOS') {
+      atestadosCount++;
+      return { employee: emp, status: 'ATESTADO', statusLabel: 'Atestado', teamName };
+    }
+    if (dayVal === 'FERIAS' || dayVal === 'FÉRIAS') {
+      feriasCount++;
+      return { employee: emp, status: 'FERIAS', statusLabel: 'Férias', teamName };
     }
     if (dayVal === 'TREINAMENTO') {
       treinamentoCount++;

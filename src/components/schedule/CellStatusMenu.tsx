@@ -5,6 +5,7 @@ import { Check, X } from 'lucide-react';
 export type CellOptionKey =
   | 'FOLGA'
   | 'FOLGA_FERIADO'
+  | 'ATESTADO'
   | 'TREINAMENTO'
   | 'DISPENSA'
   | 'INSS'
@@ -50,6 +51,13 @@ export const CELL_STATUS_CONFIG: Record<
     emoji: '🏖️',
     badgeClass: 'bg-amber-100 border-amber-300 text-amber-900',
     description: 'Folga de feriado compensatório',
+  },
+  ATESTADO: {
+    label: 'Atestado',
+    shortLabel: 'Atestado',
+    emoji: '🩺',
+    badgeClass: 'bg-rose-100 border-rose-300 text-rose-900',
+    description: 'Atestado médico / licença saúde',
   },
   TREINAMENTO: {
     label: 'Treinamento',
@@ -98,6 +106,7 @@ export const CELL_STATUS_CONFIG: Record<
 const ORDERED_OPTIONS: CellOptionKey[] = [
   'FOLGA',
   'FOLGA_FERIADO',
+  'ATESTADO',
   'TREINAMENTO',
   'DISPENSA',
   'INSS',

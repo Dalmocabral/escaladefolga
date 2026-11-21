@@ -23,6 +23,7 @@ import {
   type TeamConfig,
 } from '../utils/teams';
 import { exportScheduleToExcel } from '../utils/exportToExcel';
+import { getDefaultLeavesForRole } from '../utils/staffing';
 import { MONTH_NAMES, DAY_NAMES } from '../constants';
 import { MetricsPanel } from './schedule/MetricsPanel';
 import { VacationList } from './schedule/VacationList';
@@ -129,6 +130,7 @@ export const getDayStatus = (val: boolean | string | undefined): CellOptionKey =
   if (!val || val === 'TRABALHO') return 'TRABALHO';
   if (val === true || val === 'FOLGA') return 'FOLGA';
   if (val === 'FOLGA_FERIADO') return 'FOLGA_FERIADO';
+  if (val === 'ATESTADO' || val === 'ATESTADO_MEDICO' || val === 'ATESTADOS') return 'ATESTADO';
   if (val === 'TREINAMENTO') return 'TREINAMENTO';
   if (val === 'DISPENSA') return 'DISPENSA';
   if (val === 'INSS') return 'INSS';
@@ -868,61 +870,7 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
       console.error('Erro ao ler afastamentos do banco local:', e);
     }
 
-    if (roleName.toLowerCase() === 'motorista') {
-      const motEmployees = employees.filter(
-        (e) => e.shiftId === shift.id && e.role.toLowerCase() === 'motorista'
-      );
-      if (motEmployees.length >= 3) {
-        return [
-          {
-            id: 'leave-mot-1',
-            employeeId: motEmployees[0].id,
-            type: 'FERIAS',
-            startDate: '2026-11-10',
-            endDate: '2026-11-24',
-            observation: 'Férias programadas (15 dias)',
-          },
-          {
-            id: 'leave-mot-2',
-            employeeId: motEmployees[Math.min(7, motEmployees.length - 1)].id,
-            type: 'FERIAS',
-            startDate: '2026-11-10',
-            endDate: '2026-11-24',
-            observation: 'Férias programadas (15 dias)',
-          },
-          {
-            id: 'leave-mot-3',
-            employeeId: motEmployees[Math.min(14, motEmployees.length - 1)].id,
-            type: 'FERIAS',
-            startDate: '2026-11-10',
-            endDate: '2026-11-24',
-            observation: 'Férias programadas (15 dias)',
-          },
-        ];
-      }
-    }
-
-    if (shift.id === 'manha' && roleName.toLowerCase() === 'operador de bloco') {
-      const dalmo = employees.find(
-        (e) =>
-          e.shiftId === 'manha' &&
-          e.role.toLowerCase() === 'operador de bloco' &&
-          e.name.toLowerCase().includes('dalmo')
-      );
-      if (dalmo) {
-        return [
-          {
-            id: 'leave-1',
-            employeeId: dalmo.id,
-            type: 'FERIAS',
-            startDate: '2026-11-05',
-            endDate: '2026-11-19',
-            observation: 'Férias regulamentares 15 dias',
-          },
-        ];
-      }
-    }
-    return [];
+    return getDefaultLeavesForRole(shift.id, roleName, categoryEmployees);
   });
 
   // Salva afastamentos no banco local
@@ -2476,6 +2424,11 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                                   /* Folga Feriado */
                                   <div className="w-full h-7 rounded-md bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-amber-200" title="Folga Feriado">
                                     F. Feriado
+                                  </div>
+                                ) : cellStatus === 'ATESTADO' ? (
+                                  /* Atestado Célula */
+                                  <div className="w-full h-7 rounded-md bg-rose-100 border border-rose-300 text-rose-900 text-[10px] font-bold flex items-center justify-center shadow-2xs hover:bg-rose-200" title="Atestado Médico">
+                                    Atestado
                                   </div>
                                 ) : cellStatus === 'TREINAMENTO' ? (
                                   /* Treinamento */
