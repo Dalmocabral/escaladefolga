@@ -648,31 +648,42 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
         let teamHasAnomaly = false;
         let referenceSchedule: Record<number, boolean | string> | null = null;
 
-        for (const member of members) {
-          const empDays = updatedMonthData[member.id];
-          if (!empDays) {
-            teamHasAnomaly = true;
-            break;
-          }
-
-          if (monthOffDayStyle === 'interleaved') {
-            // Em 5x2 Intercalada (3x1 + 2x1): folgas nunca são consecutivas (máx 1 folga por vez)
-            let consecutiveOff = 0;
+        // Se for 5x2 contínua com 7 equipes (Modelo A semanal), valida diretamente se todos os dias seguem a rotação semanal
+        if (settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
+          for (const member of members) {
+            const empDays = updatedMonthData[member.id];
+            if (!empDays) {
+              teamHasAnomaly = true;
+              break;
+            }
             for (let d = 1; d <= daysInM; d++) {
+              const expectedOff =
+                monthOffDayStyle === 'interleaved'
+                  ? isTeamOff5x2Interleaved(y, m, d, team.id)
+                  : isTeamOff5x2Continuous(y, m, d, team.id);
               const val = empDays[d];
-              const isOff = val === true || val === 'FOLGA';
-              if (isOff) {
-                consecutiveOff++;
-                if (consecutiveOff > 1) {
-                  teamHasAnomaly = true;
-                  break;
-                }
-              } else {
-                consecutiveOff = 0;
+              if (typeof val === 'string' && val !== 'FOLGA' && val !== 'TRABALHO') {
+                // Afastamento especial (FÉRIAS, ATESTADO, etc.): preserva
+                continue;
+              }
+              const actualOff = val === true || val === 'FOLGA';
+              if (actualOff !== expectedOff) {
+                teamHasAnomaly = true;
+                break;
               }
             }
-          } else {
-            // Em 5x2 Consecutiva: verifica se há folga isolada de 1 dia ou mais de 2 folgas consecutivas
+            if (teamHasAnomaly) break;
+          }
+        } else {
+          // Escala 5x2 Fixa ou com equipes manuais: valida anomalias estruturais
+          for (const member of members) {
+            const empDays = updatedMonthData[member.id];
+            if (!empDays) {
+              teamHasAnomaly = true;
+              break;
+            }
+
+            // Verifica se há folga isolada de 1 dia ou mais de 2 folgas consecutivas em 5x2 fixa
             let consecutiveOff = 0;
             for (let d = 1; d <= daysInM; d++) {
               const val = empDays[d];
@@ -685,72 +696,40 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
                 }
               } else {
                 if (consecutiveOff === 1 && d > 2) {
-                  // Folga isolada de 1 dia em consecutiva é anomalia (escala 5x1 antiga como em Outubro)
                   teamHasAnomaly = true;
                   break;
                 }
                 consecutiveOff = 0;
               }
             }
+            if (teamHasAnomaly) break;
           }
-          if (teamHasAnomaly) break;
-
-          // Verifica divergência entre membros da mesma equipe
-          if (!referenceSchedule) {
-            referenceSchedule = empDays;
-          } else {
-            for (let d = 1; d <= daysInM; d++) {
-              const refIsOff = referenceSchedule[d] === true || referenceSchedule[d] === 'FOLGA';
-              const curIsOff = empDays[d] === true || empDays[d] === 'FOLGA';
-              if (refIsOff !== curIsOff) {
-                teamHasAnomaly = true;
-                break;
-              }
-            }
-          }
-          if (teamHasAnomaly) break;
         }
 
-        // Também verifica se a escala da equipe corresponde à rotação contínua ideal (Intercalada ou Consecutiva Modelo A)
-        if (!teamHasAnomaly && settings.numTeams === 7 && settings.rotationMode !== 'fixed' && !settings.customTeamOffDays?.[team.id]) {
-          const sampleDays = updatedMonthData[members[0]?.id];
-          if (sampleDays) {
-            for (let d = 1; d <= Math.min(daysInM, 7); d++) {
-              const expectedOff =
-                monthOffDayStyle === 'interleaved'
-                  ? isTeamOff5x2Interleaved(y, m, d, team.id)
-                  : isTeamOff5x2Continuous(y, m, d, team.id);
-              const actualVal = sampleDays[d];
-              const actualOff = actualVal === true || actualVal === 'FOLGA';
-              if (actualVal === true || actualVal === false || actualVal === 'FOLGA' || actualVal === 'TRABALHO' || actualVal === undefined) {
-                if (actualOff !== expectedOff) {
-                  teamHasAnomaly = true;
-                  break;
+        // Verifica divergência entre membros da mesma equipe
+        if (!teamHasAnomaly) {
+          for (const member of members) {
+            const empDays = updatedMonthData[member.id];
+            if (!empDays) continue;
+            if (!referenceSchedule) {
+              referenceSchedule = empDays;
+            } else {
+              for (let d = 1; d <= daysInM; d++) {
+                const refVal = referenceSchedule[d];
+                const curVal = empDays[d];
+                const refIsSpecial = typeof refVal === 'string' && refVal !== 'FOLGA' && refVal !== 'TRABALHO';
+                const curIsSpecial = typeof curVal === 'string' && curVal !== 'FOLGA' && curVal !== 'TRABALHO';
+                if (!refIsSpecial && !curIsSpecial) {
+                  const refIsOff = refVal === true || refVal === 'FOLGA';
+                  const curIsOff = curVal === true || curVal === 'FOLGA';
+                  if (refIsOff !== curIsOff) {
+                    teamHasAnomaly = true;
+                    break;
+                  }
                 }
               }
             }
-          }
-        }
-
-        // Também verifica se duas equipes estão com o par idêntico de folgas
-        if (!teamHasAnomaly) {
-          for (const other of distributedTeams) {
-            if (other.team.id === team.id || other.members.length === 0) continue;
-            const otherDays = updatedMonthData[other.members[0]?.id];
-            const myDays = updatedMonthData[members[0]?.id];
-            if (otherDays && myDays) {
-              let sameOffCount = 0;
-              for (let d = 1; d <= Math.min(daysInM, 7); d++) {
-                const myOff = myDays[d] === true || myDays[d] === 'FOLGA';
-                const otherOff = otherDays[d] === true || otherDays[d] === 'FOLGA';
-                if (myOff && otherOff) sameOffCount++;
-              }
-              // Duas equipes com 2 folgas iguais na mesma semana colidiram no mesmo par!
-              if (sameOffCount >= 2) {
-                teamHasAnomaly = true;
-                break;
-              }
-            }
+            if (teamHasAnomaly) break;
           }
         }
 

@@ -487,12 +487,23 @@ export const ROTATION_PAIRS_5X2: [number, number][] = [
 ];
 
 /**
+ * Retorna o índice da semana no calendário contínuo (semanas de Domingo a Sábado),
+ * ancorado no domingo 01/11/2026.
+ * Todos os 7 dias da mesma semana compartilham o mesmo weekIndex.
+ */
+export function getCalendarWeekIndex(year: number, month: number, day: number): number {
+  const d = new Date(year, month, day);
+  const dow = d.getDay(); // 0 = Domingo, ..., 6 = Sábado
+  const sun = new Date(year, month, day - dow);
+  const anchor = new Date(2026, 10, 1);
+  const diffDays = Math.round((sun.getTime() - anchor.getTime()) / (24 * 3600 * 1000));
+  return Math.floor(diffDays / 7);
+}
+
+/**
  * Determina se a equipe está de folga em uma data específica no regime contínuo 5x2 com 7 equipes.
- * Aplica o Modelo A (Escala Corrida com Rotação Mensal de Equipes):
- * - A cada mês, cada equipe rotaciona e muda de par de folga (garantindo que todas passem pelos fins de semana).
- * - Em Novembro/2026: Equipe Verde folga Seg/Ter.
- * - Em Dezembro/2026: Equipe Verde avança para Ter/Qua.
- * - Em Janeiro/2027: Equipe Verde avança para Qua/Qui.
+ * Aplica o Modelo A (Escala Corrida com Rotação SEMANAL de Equipes):
+ * - A cada semana, cada equipe rotaciona e muda de par de folga (garantindo que todas passem pelos fins de semana).
  * - Em todos os dias do ano, rigorosamente 2 equipes folgam e 5 equipes trabalham.
  * - Todos os membros da mesma equipe recebem 100% a mesma escala.
  */
@@ -502,9 +513,8 @@ export function isTeamOff5x2Continuous(
   day: number,
   teamId: number
 ): boolean {
-  // Deslocamento mensal ancorado em Novembro/2026 (year=2026, month=10)
-  const monthIndex = (year * 12 + month) - (2026 * 12 + 10);
-  const pairIdx = (((teamId + monthIndex) % 7) + 7) % 7;
+  const weekIndex = getCalendarWeekIndex(year, month, day);
+  const pairIdx = (((teamId + weekIndex) % 7) + 7) % 7;
   const pair = ROTATION_PAIRS_5X2[pairIdx];
   const dow = new Date(year, month, day).getDay();
   return pair[0] === dow || pair[1] === dow;
@@ -513,7 +523,7 @@ export function isTeamOff5x2Continuous(
 /**
  * Pares de folgas semanais intercaladas para a Escala 5x2 (3x1 + 2x1 corrida rotativa).
  * (0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado).
- * Cada par separa as duas folgas por intervalos de 2 e 3 dias de trabalho (máx. 3 dias seguidos de trabalho).
+ * Cada par separa as duas folgas por intervalos de 2 e 3 dias de trabalho (máx. 3 ou 4 dias seguidos de trabalho).
  * Em todos os 7 dias da semana, rigorosamente 2 equipes folgam e 5 equipes trabalham.
  */
 export const INTERLEAVED_PAIRS_5X2: [number, number][] = [
@@ -528,8 +538,9 @@ export const INTERLEAVED_PAIRS_5X2: [number, number][] = [
 
 /**
  * Determina se a equipe está de folga em uma data específica no regime contínuo 5x2 INTERCALADO (3x1 + 2x1).
+ * Rotação SEMANAL de equipes: a cada semana a equipe avança de par de folga!
  * As folgas não são consecutivas: ocorrem separadas na semana (ex: Quarta e Domingo, etc.).
- * Mantém rotação mensal de equipes de modo que todas passem pelos fins de semana e nunca trabalhem > 3 dias seguidos.
+ * Ninguém trabalha mais do que 4 dias seguidos na troca de semana (muito abaixo do limite CLT de 6).
  */
 export function isTeamOff5x2Interleaved(
   year: number,
@@ -537,9 +548,8 @@ export function isTeamOff5x2Interleaved(
   day: number,
   teamId: number
 ): boolean {
-  // Deslocamento mensal ancorado em Novembro/2026 (year=2026, month=10)
-  const monthIndex = (year * 12 + month) - (2026 * 12 + 10);
-  const pairIdx = (((teamId + monthIndex) % 7) + 7) % 7;
+  const weekIndex = getCalendarWeekIndex(year, month, day);
+  const pairIdx = (((teamId + weekIndex) % 7) + 7) % 7;
   const pair = INTERLEAVED_PAIRS_5X2[pairIdx];
   const dow = new Date(year, month, day).getDay();
   return pair[0] === dow || pair[1] === dow;
