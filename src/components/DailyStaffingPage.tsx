@@ -35,10 +35,9 @@ export const DailyStaffingPage: React.FC<DailyStaffingPageProps> = ({
   employees,
   onGoToRoleSchedule,
 }) => {
-  // Data selecionada (Padrão: 17 de Novembro de 2026, ou hoje se preferir)
+  // Data selecionada (Padrão: Data Atual / Hoje)
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
-    // Inicializa em 17/11/2026 (mesma data do modelo do usuário na imagem)
-    return new Date(2026, 10, 17);
+    return new Date();
   });
 
   // Turno atual (caso o usuário queira alternar turnos no topo da página)
@@ -258,6 +257,13 @@ export const DailyStaffingPage: React.FC<DailyStaffingPageProps> = ({
               className="text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-xl transition"
             >
               Hoje
+            </button>
+            <button
+              onClick={() => setSelectedDate(new Date(2026, 10, 17))}
+              className="text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2.5 py-1.5 rounded-xl transition"
+              title="Ir para a data do modelo de planilha de teste (17/11/2026)"
+            >
+              Planilha (17/11)
             </button>
 
             <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 shadow-2xs">

@@ -351,7 +351,7 @@ export function getAllLeavesForEmployees(
   aliases: string[],
   catEmployees: Employee[]
 ): EmployeeLeave[] {
-  const empIds = new Set(catEmployees.map((e) => e.id));
+  const empIds = new Set(catEmployees.map((e) => String(e.id)));
   const leavesMap = new Map<string, EmployeeLeave>();
 
   const safeRole = roleName.replace(/\s+/g, '_');
@@ -379,7 +379,7 @@ export function getAllLeavesForEmployees(
   const addLeavesFromList = (list: any[]) => {
     if (!Array.isArray(list)) return;
     for (const item of list) {
-      if (item && item.employeeId && empIds.has(item.employeeId)) {
+      if (item && item.employeeId && empIds.has(String(item.employeeId))) {
         const uniqueKey = item.id || `${item.employeeId}_${item.type}_${item.startDate}_${item.endDate}`;
         if (!leavesMap.has(uniqueKey)) {
           leavesMap.set(uniqueKey, item);
@@ -528,7 +528,7 @@ function computeCategoryRow(
 
     // A) Verifica Afastamento Global (Férias, Atestado, INSS, Exame)
     const activeLeave = leaves.find((l) => {
-      if (l.employeeId !== emp.id) return false;
+      if (String(l.employeeId) !== String(emp.id)) return false;
       const start = normalizeDateStr(l.startDate);
       const end = normalizeDateStr(l.endDate);
       return normTargetDate >= start && normTargetDate <= end;

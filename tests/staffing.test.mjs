@@ -102,3 +102,68 @@ test('computeDailyStaffing contabiliza atestados e férias no turno manhã para 
 
   assert.equal(totals.atestados, 5, 'Total de atestados no turno deve ser 5');
 });
+
+test('computeDailyStaffing reflete atestados personalizados no dia 21/11/2026 e 0 no dia 17/11/2026', () => {
+  const shift = {
+    id: 'manha',
+    name: 'Turno Manhã (07:00 - 15:00)',
+    timeRange: '07:00 - 15:00',
+    color: 'amber',
+  };
+
+  const employees = [
+    { id: '1001', name: 'teste001', registration: '001', role: 'Motorista', shiftId: 'manha' },
+    { id: '1002', name: 'teste002', registration: '002', role: 'Motorista', shiftId: 'manha' },
+    { id: '1030', name: 'Valdir Fernandes Jr', registration: '1030', role: 'Motorista', shiftId: 'manha' },
+  ];
+
+  // Mock global localStorage
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) || null,
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+    get length() { return store.size; },
+    key: (i) => Array.from(store.keys())[i] || null,
+  };
+
+  // Salva os 3 atestados do usuário que iniciam em 21/11/2026
+  const userLeaves = [
+    {
+      id: 'leave-1',
+      employeeId: '1001',
+      type: 'ATESTADO',
+      startDate: '2026-11-21',
+      endDate: '2026-11-24',
+      observation: 'Atestado médico',
+    },
+    {
+      id: 'leave-2',
+      employeeId: '1002',
+      type: 'ATESTADO',
+      startDate: '2026-11-21',
+      endDate: '2026-11-24',
+      observation: 'Atestado médico',
+    },
+    {
+      id: 'leave-3',
+      employeeId: '1030',
+      type: 'ATESTADO',
+      startDate: '2026-11-21',
+      endDate: '2026-11-24',
+      observation: 'Atestado médico Valdir',
+    },
+  ];
+  globalThis.localStorage.setItem('escala_db_leaves_v5_manha_Motorista', JSON.stringify(userLeaves));
+
+  // No dia 17/11/2026: deve ser 0 atestados para Motorista (pois o atestado começou no dia 21)
+  const res17 = computeDailyStaffing(shift, new Date(2026, 10, 17), employees);
+  const tractor17 = res17.rows.find((r) => r.key === 'tractor');
+  assert.equal(tractor17?.atestados, 0, 'No dia 17/11/2026 deve ter 0 atestados');
+
+  // No dia 21/11/2026: deve ter 3 atestados para Motorista
+  const res21 = computeDailyStaffing(shift, new Date(2026, 10, 21), employees);
+  const tractor21 = res21.rows.find((r) => r.key === 'tractor');
+  assert.equal(tractor21?.atestados, 3, 'No dia 21/11/2026 deve ter exatamente 3 atestados');
+});

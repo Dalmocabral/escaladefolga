@@ -1793,16 +1793,21 @@ export const RoleSchedulePage: React.FC<RoleSchedulePageProps> = ({
 
   // 2. Total Atestado no Dia Atual
   const atestadoTodayList = useMemo(() => {
-    return categoryEmployees.filter((emp) =>
-      leaves.some(
+    return categoryEmployees.filter((emp) => {
+      const hasLeave = leaves.some(
         (l) =>
-          l.employeeId === emp.id &&
+          String(l.employeeId) === String(emp.id) &&
           l.type === 'ATESTADO' &&
           selectedDateStr >= l.startDate &&
           selectedDateStr <= l.endDate
-      )
-    );
-  }, [categoryEmployees, leaves, selectedDateStr]);
+      );
+      if (hasLeave) return true;
+      const team = employeeTeamMap.get(emp.id) || TEAMS[0];
+      const offs = getEmployeeOffsMap(emp.id, team.id);
+      const val = offs[selectedDayForMetrics];
+      return val === 'ATESTADO' || val === 'ATESTADO_MEDICO' || val === 'ATESTADOS';
+    });
+  }, [categoryEmployees, leaves, selectedDateStr, selectedDayForMetrics, employeeTeamMap, currentMonthSchedule, isCurrentMonthGenerated, settings]);
   const totalAtestadoHoje = atestadoTodayList.length;
 
   // 3. Total INSS no Dia Atual (inclui afastamentos gerais e marcação direta na célula)
