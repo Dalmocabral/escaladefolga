@@ -262,19 +262,7 @@ export const GenerateFolgaModal: React.FC<GenerateFolgaModalProps> = ({
               </div>
             )}
 
-            {hasPreviousMonthData && mode === 'continuidade' && (
-              <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs text-indigo-950 flex items-start gap-2.5">
-                <span className="text-base shrink-0">🛡️</span>
-                <div>
-                  <div className="font-bold text-xs">
-                    Continuidade Real de Folgas e Ciclos de Trabalho
-                  </div>
-                  <div className="text-[11px] text-indigo-800 mt-0.5 leading-relaxed">
-                    O sistema dará continuidade ininterrupta ao ciclo de cada equipe a partir do final de {previousMonthLabel}: quem folgou no final de {previousMonthLabel} trabalhará os 5 dias regulamentares antes de folgar, garantindo <strong>folgas contínuas e nenhum colaborador trabalhando mais de 6 dias consecutivos</strong>.
-                  </div>
-                </div>
-              </div>
-            )}
+
           </div>
 
           {/* 3. Escolha do Modo: Nova ou Continuidade */}
