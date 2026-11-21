@@ -12,7 +12,8 @@ const tempDir = await mkdtemp(join(tmpdir(), 'escala-5x2-tests-'));
 after(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
-execFileSync(resolve(testDir, '../node_modules/.bin/tsc'), [
+const tscBinary = resolve(testDir, `../node_modules/.bin/${process.platform === 'win32' ? 'tsc.cmd' : 'tsc'}`);
+execFileSync(tscBinary, [
   sourcePath,
   '--target', 'ES2022',
   '--module', 'ES2022',
@@ -20,7 +21,7 @@ execFileSync(resolve(testDir, '../node_modules/.bin/tsc'), [
   '--ignoreConfig',
   '--skipLibCheck',
   '--outDir', tempDir,
-], { cwd: resolve(testDir, '..'), stdio: 'pipe' });
+], { cwd: resolve(testDir, '..'), stdio: 'pipe', shell: process.platform === 'win32' });
 const modulePath = join(tempDir, 'teams.mjs');
 await rename(join(tempDir, 'utils', 'teams.js'), modulePath);
 const { buildInitialSchedule, distributeEmployeesToTeams, enforce5x2TeamContinuity, isTeamOff5x2 } = await import(
